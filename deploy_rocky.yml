@@ -82,10 +82,11 @@
         delay: 5
         timeout: 120
 
+          
     - name: Set hostname on new VM
       ansible.builtin.hostname:
         name: "srv-{{ vm_hostname }}"
       delegate_to: "{{ vm_real_ip }}"
       vars:
         ansible_user: "{{ vm_user | default('nagix') }}"
-        ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
