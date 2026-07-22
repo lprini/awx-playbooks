@@ -5,6 +5,8 @@
   vars:
     tf_dir: "{{ playbook_dir }}/terraform/rocky-deploy"
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
+    pve_endpoint: "https://10.10.10.240:8006"
+    pve_node: "pve-nagixdtc"
 
   tasks:
     - name: Terraform init
@@ -16,7 +18,7 @@
     - name: Terraform apply
       ansible.builtin.command: >
         terraform apply -auto-approve -input=false
-        -var="pve_endpoint=https://10.10.10.240:8006/"
+        -var="pve_endpoint={{ pve_endpoint }}/"
         -var="pve_api_token=terraform@pve!provider={{ pve_token_secret }}"
         -var="vm_hostname={{ vm_hostname }}"
         -var="ip_mode={{ ip_mode }}"
@@ -27,41 +29,63 @@
         chdir: "{{ tf_dir }}"
       register: tf_apply
 
-    - name: Get Terraform outputs (retry until IP is populated)
+    - name: Get Terraform outputs
       ansible.builtin.command: terraform output -json
       args:
         chdir: "{{ tf_dir }}"
       register: tf_output
       changed_when: false
-      until: (tf_output.stdout | from_json).vm_ipv4.value | length > 1
-      retries: 12
+
+    - name: Parse VM ID from Terraform output
+      ansible.builtin.set_fact:
+        new_vm_id: "{{ (tf_output.stdout | from_json).vm_id.value }}"
+
+    - name: Show new VM ID
+      ansible.builtin.debug:
+        var: new_vm_id
+
+    - name: Poll Proxmox API for agent-reported IP
+      ansible.builtin.uri:
+        url: "{{ pve_endpoint }}/api2/json/nodes/{{ pve_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+        status_code: [200, 500]
+      register: agent_net
+      until: >
+        agent_net.status == 200 and
+        (agent_net.json.data.result | selectattr('name', 'equalto', 'ens18') | list | length) > 0
+      retries: 18
       delay: 10
 
-    - name: Show raw terraform output (debug)
-      ansible.builtin.debug:
-        var: tf_output.stdout
-
-    - name: Parse outputs
+    - name: Extract real IPv4 address from agent response
       ansible.builtin.set_fact:
-        vm_ipv4_list: "{{ (tf_output.stdout | from_json).vm_ipv4.value }}"
+        vm_real_ip: >-
+          {{
+            (agent_net.json.data.result
+              | selectattr('name', 'equalto', 'ens18')
+              | first)['ip-addresses']
+              | selectattr('ip-address-type', 'equalto', 'ipv4')
+              | map(attribute='ip-address')
+              | first
+          }}
 
-    - name: Show deployed VM IP(s)
+    - name: Show deployed VM IP
       ansible.builtin.debug:
-        var: vm_ipv4_list
+        var: vm_real_ip
 
     - name: Wait for SSH to be available on new VM
       ansible.builtin.wait_for:
-        host: "{{ vm_ipv4_list[1][0] }}"
+        host: "{{ vm_real_ip }}"
         port: 22
-        delay: 10
-        timeout: 180
-      when: vm_ipv4_list[1] is defined
+        delay: 5
+        timeout: 120
 
     - name: Set hostname on new VM
       ansible.builtin.hostname:
         name: "srv-{{ vm_hostname }}"
-      delegate_to: "{{ vm_ipv4_list[1][0] }}"
+      delegate_to: "{{ vm_real_ip }}"
       vars:
         ansible_user: "{{ vm_user | default('nagix') }}"
         ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
-      when: vm_ipv4_list[1] is defined

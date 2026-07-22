@@ -47,3 +47,7 @@ output "vm_ipv4" {
   value      = proxmox_virtual_environment_vm.deploy.ipv4_addresses
   depends_on = [time_sleep.wait_for_agent]
 }
+
+output "vm_id" {
+  value = proxmox_virtual_environment_vm.deploy.vm_id
+}
