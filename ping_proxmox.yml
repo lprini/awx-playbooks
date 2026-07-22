@@ -15,3 +15,12 @@
     - name: Show result
       ansible.builtin.debug:
         var: pve_version.json
+
+    - name: Check Terraform is available
+      ansible.builtin.command: terraform version
+      register: tf_version
+      changed_when: false
+
+    - name: Show Terraform version
+      ansible.builtin.debug:
+        var: tf_version.stdout
