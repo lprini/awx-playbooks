@@ -1,0 +1,58 @@
+---
+- name: Deploy Rocky Linux VM via Terraform
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tf_dir: "{{ playbook_dir }}/terraform/rocky-deploy"
+
+  tasks:
+    - name: Terraform init
+      ansible.builtin.command: terraform init -input=false
+      args:
+        chdir: "{{ tf_dir }}"
+      changed_when: false
+
+    - name: Terraform apply
+      ansible.builtin.command: >
+        terraform apply -auto-approve -input=false
+        -var="pve_endpoint=https://10.10.10.240:8006/"
+        -var="pve_api_token=terraform@pve!provider={{ pve_token_secret }}"
+        -var="vm_hostname={{ vm_hostname }}"
+        -var="ip_mode={{ ip_mode }}"
+        -var="vm_ip={{ vm_ip | default('') }}"
+        -var="vm_gateway={{ vm_gateway | default('') }}"
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_apply
+
+    - name: Get Terraform outputs
+      ansible.builtin.command: terraform output -json
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_output
+      changed_when: false
+
+    - name: Parse outputs
+      ansible.builtin.set_fact:
+        vm_ipv4_list: "{{ (tf_output.stdout | from_json).vm_ipv4.value }}"
+
+    - name: Show deployed VM IP(s)
+      ansible.builtin.debug:
+        var: vm_ipv4_list
+
+    - name: Wait for SSH to be available on new VM
+      ansible.builtin.wait_for:
+        host: "{{ vm_ipv4_list[1][0] }}"
+        port: 22
+        delay: 10
+        timeout: 180
+      when: vm_ipv4_list[1] is defined
+
+    - name: Set hostname on new VM
+      ansible.builtin.hostname:
+        name: "srv-{{ vm_hostname }}"
+      delegate_to: "{{ vm_ipv4_list[1][0] }}"
+      vars:
+        ansible_user: "{{ vm_user | default('nagix') }}"
+        ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+      when: vm_ipv4_list[1] is defined
