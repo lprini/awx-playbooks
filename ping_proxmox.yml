@@ -1,0 +1,17 @@
+---
+- name: Test Proxmox API connectivity
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Query Proxmox version endpoint
+      ansible.builtin.uri:
+        url: "https://10.10.10.240:8006/api2/json/version"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+      register: pve_version
+
+    - name: Show result
+      ansible.builtin.debug:
+        var: pve_version.json
