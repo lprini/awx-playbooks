@@ -38,3 +38,8 @@ variable "node_name" {
   type    = string
   default = "pve-nagixdtc"
 }
+
+variable "ssh_public_key" {
+  type        = string
+  description = "SSH public key to inject into the new VM"
+}

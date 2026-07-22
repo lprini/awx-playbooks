@@ -30,7 +30,7 @@ resource "proxmox_virtual_environment_vm" "deploy" {
     }
 
     user_account {
-      keys = [file("~/.ssh/id_ed25519.pub")]
+      keys = [var.ssh_public_key]
     }
   }
 
