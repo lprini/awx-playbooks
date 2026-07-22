@@ -37,6 +37,10 @@
       retries: 12
       delay: 10
 
+    - name: Show raw terraform output (debug)
+      ansible.builtin.debug:
+        var: tf_output.stdout
+
     - name: Parse outputs
       ansible.builtin.set_fact:
         vm_ipv4_list: "{{ (tf_output.stdout | from_json).vm_ipv4.value }}"
