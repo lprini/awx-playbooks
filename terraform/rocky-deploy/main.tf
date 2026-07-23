@@ -19,6 +19,7 @@ resource "proxmox_virtual_environment_vm" "deploy" {
 
   initialization {
     datastore_id = "local-lvm"
+    interface    = "scsi1"
 
     dynamic "ip_config" {
       for_each = [1]
