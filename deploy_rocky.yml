@@ -89,6 +89,20 @@
         delay: 5
         timeout: 120
 
+    - name: Check how AWX is passing SSH credentials
+      ansible.builtin.shell: |
+        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+        echo "ANSIBLE_PRIVATE_KEY_FILE=$ANSIBLE_PRIVATE_KEY_FILE"
+        if [ -n "$ANSIBLE_PRIVATE_KEY_FILE" ] && [ -f "$ANSIBLE_PRIVATE_KEY_FILE" ]; then
+          ssh-keygen -lf "$ANSIBLE_PRIVATE_KEY_FILE"
+        fi
+      register: cred_check
+      changed_when: false
+
+    - name: Show credential check
+      ansible.builtin.debug:
+        var: cred_check.stdout_lines
+
     - name: Add new VM to in-memory inventory
       ansible.builtin.add_host:
         name: "{{ vm_real_ip }}"
