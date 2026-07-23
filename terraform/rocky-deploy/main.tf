@@ -31,7 +31,8 @@ resource "proxmox_virtual_environment_vm" "deploy" {
     }
 
     user_account {
-      keys = [var.ssh_public_key]
+      username = "nagix"
+      keys     = [var.ssh_public_key]
     }
   }
 
