@@ -69,7 +69,7 @@
       ansible.builtin.set_fact:
         vm_real_ip: >-
           {{
-            (agent_net.json.data.result
+            agent_net.json.data.result
               | rejectattr('name', 'equalto', 'lo')
               | map(attribute='ip-addresses')
               | flatten
