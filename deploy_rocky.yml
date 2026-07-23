@@ -55,7 +55,13 @@
       register: agent_net
       until: >
         agent_net.status == 200 and
-        (agent_net.json.data.result | selectattr('name', 'equalto', 'ens18') | list | length) > 0
+        (agent_net.json.data.result
+          | rejectattr('name', 'equalto', 'lo')
+          | map(attribute='ip-addresses')
+          | flatten
+          | selectattr('ip-address-type', 'equalto', 'ipv4')
+          | list
+          | length) > 0
       retries: 18
       delay: 10
 
@@ -64,8 +70,9 @@
         vm_real_ip: >-
           {{
             (agent_net.json.data.result
-              | selectattr('name', 'equalto', 'ens18')
-              | first)['ip-addresses']
+              | rejectattr('name', 'equalto', 'lo')
+              | map(attribute='ip-addresses')
+              | flatten
               | selectattr('ip-address-type', 'equalto', 'ipv4')
               | map(attribute='ip-address')
               | first
@@ -82,7 +89,6 @@
         delay: 5
         timeout: 120
 
-          
     - name: Set hostname on new VM
       ansible.builtin.hostname:
         name: "srv-{{ vm_hostname }}"
