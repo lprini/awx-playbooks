@@ -89,20 +89,18 @@
         delay: 5
         timeout: 120
 
-    - name: List SSH identities loaded in agent
-      ansible.builtin.command: ssh-add -l
-      register: sshadd_result
-      ignore_errors: true
-      changed_when: false
-
-    - name: Show loaded SSH identities
-      ansible.builtin.debug:
-        var: sshadd_result.stdout_lines
-
-    - name: Set hostname on new VM
-      ansible.builtin.hostname:
-        name: "srv-{{ vm_hostname }}"
-      delegate_to: "{{ vm_real_ip }}"
-      vars:
+    - name: Add new VM to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ vm_real_ip }}"
+        groups: new_vms
         ansible_user: "{{ vm_user | default('nagix') }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        deployed_hostname_segment: "{{ vm_hostname }}"
+
+- name: Configure new VM
+  hosts: new_vms
+  gather_facts: false
+  tasks:
+    - name: Set hostname on new VM
+      ansible.builtin.hostname:
+        name: "srv-{{ deployed_hostname_segment }}"
