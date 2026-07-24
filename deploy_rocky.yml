@@ -118,6 +118,7 @@
 - name: Configure new VM
   hosts: new_vms
   gather_facts: true
+  become: true
   tasks:
     - name: Set hostname on new VM
       ansible.builtin.hostname:
