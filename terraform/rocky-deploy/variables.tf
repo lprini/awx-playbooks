@@ -75,3 +75,8 @@ variable "admin_password" {
   sensitive = true
   default   = ""
 }
+
+variable "storage_id" {
+  type    = string
+  default = "ISCSI-CISCO-R5"
+}

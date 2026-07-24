@@ -8,8 +8,9 @@ resource "proxmox_virtual_environment_vm" "deploy" {
   pool_id   = "terraform-managed"
 
   clone {
-    vm_id = var.template_vm_id
-    full  = false
+    vm_id        = var.template_vm_id
+    full         = true
+    datastore_id = var.storage_id
   }
 
   agent {
@@ -27,22 +28,24 @@ resource "proxmox_virtual_environment_vm" "deploy" {
   }
 
   disk {
-    datastore_id = "local-lvm"
+    datastore_id = var.storage_id
     interface    = "scsi0"
     size         = var.disk_size_gb
+    file_format  = "raw"
   }
 
   dynamic "disk" {
     for_each = var.add_extra_disk == "yes" ? [1] : []
     content {
-      datastore_id = "local-lvm"
+      datastore_id = var.storage_id
       interface    = "scsi2"
       size         = var.extra_disk_size_gb
+      file_format  = "raw"
     }
   }
 
   initialization {
-    datastore_id = "local-lvm"
+    datastore_id = var.storage_id
     interface    = "scsi1"
 
     dynamic "ip_config" {
