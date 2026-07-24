@@ -17,6 +17,30 @@ resource "proxmox_virtual_environment_vm" "deploy" {
     timeout = "5m"
   }
 
+  cpu {
+    cores = var.cpu_cores
+    type  = "host"
+  }
+
+  memory {
+    dedicated = var.memory_mb
+  }
+
+  disk {
+    datastore_id = "local-lvm"
+    interface    = "scsi0"
+    size         = var.disk_size_gb
+  }
+
+  dynamic "disk" {
+    for_each = var.add_extra_disk == "yes" ? [1] : []
+    content {
+      datastore_id = "local-lvm"
+      interface    = "scsi2"
+      size         = var.extra_disk_size_gb
+    }
+  }
+
   initialization {
     datastore_id = "local-lvm"
     interface    = "scsi1"
@@ -34,6 +58,7 @@ resource "proxmox_virtual_environment_vm" "deploy" {
     user_account {
       username = "nagix"
       keys     = [var.ssh_public_key]
+      password = var.admin_password != "" ? var.admin_password : null
     }
   }
 

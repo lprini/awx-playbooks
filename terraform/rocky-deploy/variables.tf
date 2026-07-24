@@ -25,8 +25,8 @@ variable "vm_ip" {
 }
 
 variable "vm_gateway" {
-  type        = string
-  default     = ""
+  type    = string
+  default = ""
 }
 
 variable "template_vm_id" {
@@ -42,4 +42,36 @@ variable "node_name" {
 variable "ssh_public_key" {
   type        = string
   description = "SSH public key to inject into the new VM"
+}
+
+variable "cpu_cores" {
+  type    = number
+  default = 2
+}
+
+variable "memory_mb" {
+  type    = number
+  default = 2048
+}
+
+variable "disk_size_gb" {
+  type        = number
+  default     = 40
+  description = "Main disk size in GB. Proxmox can only grow disks, never shrink."
+}
+
+variable "add_extra_disk" {
+  type    = string
+  default = "no"
+}
+
+variable "extra_disk_size_gb" {
+  type    = number
+  default = 20
+}
+
+variable "admin_password" {
+  type      = string
+  sensitive = true
+  default   = ""
 }

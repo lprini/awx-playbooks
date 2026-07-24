@@ -25,9 +25,16 @@
         -var="vm_ip={{ vm_ip | default('') }}"
         -var="vm_gateway={{ vm_gateway | default('') }}"
         -var="ssh_public_key={{ ssh_public_key }}"
+        -var="cpu_cores={{ cpu_cores | default(2) }}"
+        -var="memory_mb={{ memory_mb | default(2048) }}"
+        -var="disk_size_gb={{ disk_size_gb | default(40) }}"
+        -var="add_extra_disk={{ add_extra_disk | default('no') }}"
+        -var="extra_disk_size_gb={{ extra_disk_size_gb | default(20) }}"
+        -var="admin_password={{ admin_password | default('') }}"
       args:
         chdir: "{{ tf_dir }}"
       register: tf_apply
+      no_log: true
 
     - name: Get Terraform outputs
       ansible.builtin.command: terraform output -json
@@ -89,20 +96,6 @@
         delay: 5
         timeout: 120
 
-    - name: Check how AWX is passing SSH credentials
-      ansible.builtin.shell: |
-        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
-        echo "ANSIBLE_PRIVATE_KEY_FILE=$ANSIBLE_PRIVATE_KEY_FILE"
-        if [ -n "$ANSIBLE_PRIVATE_KEY_FILE" ] && [ -f "$ANSIBLE_PRIVATE_KEY_FILE" ]; then
-          ssh-keygen -lf "$ANSIBLE_PRIVATE_KEY_FILE"
-        fi
-      register: cred_check
-      changed_when: false
-
-    - name: Show credential check
-      ansible.builtin.debug:
-        var: cred_check.stdout_lines
-
     - name: Add new VM to in-memory inventory
       ansible.builtin.add_host:
         name: "{{ vm_real_ip }}"
@@ -110,11 +103,95 @@
         ansible_user: "{{ vm_user | default('nagix') }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
         deployed_hostname_segment: "{{ vm_hostname }}"
+        do_install_tools: "{{ install_tools | default('yes') }}"
+        do_install_acronis: "{{ install_acronis | default('no') }}"
+        do_create_user: "{{ create_user | default('no') }}"
+        new_username_var: "{{ new_username | default('') }}"
+        new_user_password_var: "{{ new_user_password | default('') }}"
+        do_enable_password_auth: "{{ enable_password_auth | default('no') }}"
+        admin_password_set: "{{ (admin_password | default('')) != '' }}"
+        deployed_cpu: "{{ cpu_cores | default(2) }}"
+        deployed_memory: "{{ memory_mb | default(2048) }}"
+        deployed_disk: "{{ disk_size_gb | default(40) }}"
+        deployed_extra_disk: "{{ add_extra_disk | default('no') }}"
 
 - name: Configure new VM
   hosts: new_vms
-  gather_facts: false
+  gather_facts: true
   tasks:
     - name: Set hostname on new VM
       ansible.builtin.hostname:
         name: "srv-{{ deployed_hostname_segment }}"
+
+    - name: Install troubleshooting tools
+      ansible.builtin.dnf:
+        name:
+          - vim
+          - htop
+          - tcpdump
+          - bind-utils
+          - net-tools
+          - nmap-ncat
+          - mtr
+          - wget
+          - curl
+          - tar
+          - unzip
+          - lsof
+          - traceroute
+          - bash-completion
+        state: present
+      when: do_install_tools == 'yes'
+
+    - name: Install kernel headers and build tools for Acronis agent
+      ansible.builtin.dnf:
+        name:
+          - "kernel-devel-{{ ansible_kernel }}"
+          - "kernel-headers-{{ ansible_kernel }}"
+          - gcc
+          - make
+          - perl
+          - elfutils-libelf-devel
+          - dkms
+        state: present
+      when: do_install_acronis == 'yes'
+
+    # PLACEHOLDER — needs a real installer source next session
+    # - name: Download Acronis agent installer
+    #   ansible.builtin.get_url:
+    #     url: "{{ acronis_installer_url }}"
+    #     dest: /tmp/acronis_installer.sh
+    #     mode: '0755'
+    #   when: do_install_acronis == 'yes'
+    #
+    # - name: Run Acronis agent installer
+    #   ansible.builtin.command: /tmp/acronis_installer.sh -a
+    #   when: do_install_acronis == 'yes'
+
+    - name: Create additional user
+      ansible.builtin.user:
+        name: "{{ new_username_var }}"
+        password: "{{ new_user_password_var | password_hash('sha512') }}"
+        shell: /bin/bash
+        create_home: true
+      when: do_create_user == 'yes' and new_username_var != ''
+      no_log: true
+
+    - name: Unlock admin password if one was set
+      ansible.builtin.command: passwd -u nagix
+      when: admin_password_set | bool
+      changed_when: false
+
+    - name: Enable SSH password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication yes'
+      when: do_enable_password_auth == 'yes'
+      notify: restart sshd
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
