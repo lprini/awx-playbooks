@@ -7,6 +7,9 @@
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
     pve_endpoint: "https://10.10.10.240:8006"
     pve_node: "pve-nagixdtc"
+    smtp_host: "smtp.skymail.net.br"
+    smtp_port: 587
+    notify_email: "lucasprini@nagix.com.br"
 
   tasks:
     - name: Terraform init
@@ -103,6 +106,8 @@
         ansible_user: "{{ vm_user | default('nagix') }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
         deployed_hostname_segment: "{{ vm_hostname }}"
+        deployed_ip: "{{ vm_real_ip }}"
+        deployed_ip_mode: "{{ ip_mode }}"
         do_install_tools: "{{ install_tools | default('yes') }}"
         do_install_acronis: "{{ install_acronis | default('no') }}"
         do_create_user: "{{ create_user | default('no') }}"
@@ -110,15 +115,24 @@
         new_user_password_var: "{{ new_user_password | default('') }}"
         do_enable_password_auth: "{{ enable_password_auth | default('no') }}"
         admin_password_set: "{{ (admin_password | default('')) != '' }}"
+        admin_password_value: "{{ admin_password | default('') }}"
         deployed_cpu: "{{ cpu_cores | default(2) }}"
         deployed_memory: "{{ memory_mb | default(2048) }}"
         deployed_disk: "{{ disk_size_gb | default(40) }}"
         deployed_extra_disk: "{{ add_extra_disk | default('no') }}"
+        deployed_extra_disk_size: "{{ extra_disk_size_gb | default(20) }}"
+        deployed_vm_id: "{{ new_vm_id }}"
+        deployed_storage: "ISCSI-CISCO-R5"
+        deployed_node: "{{ pve_node }}"
 
 - name: Configure new VM
   hosts: new_vms
   gather_facts: true
   become: true
+  vars:
+    smtp_host: "smtp.skymail.net.br"
+    smtp_port: 587
+    notify_email: "lucasprini@nagix.com.br"
   tasks:
     - name: Set hostname on new VM
       ansible.builtin.hostname:
@@ -175,7 +189,6 @@
         password: "{{ new_user_password_var | password_hash('sha512') }}"
         shell: /bin/bash
         create_home: true
-        
       when: do_create_user == 'yes' and new_username_var != ''
       no_log: true
 
@@ -191,6 +204,51 @@
         line: 'PasswordAuthentication yes'
       when: do_enable_password_auth == 'yes'
       notify: restart sshd
+
+    - name: Build email body
+      ansible.builtin.set_fact:
+        email_body: |
+          VM Provisioned — srv-{{ deployed_hostname_segment }}
+          ========================================
+          Proxmox Node:     {{ deployed_node }}
+          Storage:          {{ deployed_storage }}
+          VM ID:            {{ deployed_vm_id }}
+          IP Address:       {{ deployed_ip }} ({{ deployed_ip_mode }})
+
+          Resources:
+            CPU Cores:      {{ deployed_cpu }}
+            Memory (MB):    {{ deployed_memory }}
+            Disk:           {{ deployed_disk }} GB
+            Extra Disk:     {{ deployed_extra_disk }}{{ ' - ' + deployed_extra_disk_size + ' GB' if deployed_extra_disk == 'yes' else '' }}
+
+          Access:
+            Admin user:     nagix
+              SSH Key:      Yes (key-based login enabled)
+              Password:     {{ admin_password_value if admin_password_set else 'not set' }}
+              Password SSH: {{ 'enabled' if do_enable_password_auth == 'yes' else 'disabled' }}
+
+            Additional user: {{ new_username_var if (do_create_user == 'yes' and new_username_var != '') else 'none created' }}
+              Password:      {{ new_user_password_var if (do_create_user == 'yes' and new_username_var != '') else 'n/a' }}
+
+          Packages installed:
+            Troubleshooting tools: {{ do_install_tools }}
+            Acronis agent:         {{ do_install_acronis }}
+          ========================================
+      no_log: true
+
+    - name: Send provisioning email
+      community.general.mail:
+        host: "{{ smtp_host }}"
+        port: "{{ smtp_port }}"
+        username: "{{ notify_email }}"
+        password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
+        to: "{{ notify_email }}"
+        from: "{{ notify_email }}"
+        subject: "VM Provisioned: srv-{{ deployed_hostname_segment }}"
+        body: "{{ email_body }}"
+        secure: starttls
+      no_log: true
+      delegate_to: localhost
 
   handlers:
     - name: restart sshd
