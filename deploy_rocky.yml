@@ -175,7 +175,9 @@
         password: "{{ new_user_password_var | password_hash('sha512') }}"
         shell: /bin/bash
         create_home: true
+        
       when: do_create_user == 'yes' and new_username_var != ''
+      no_log: true
 
     - name: Unlock admin password if one was set
       ansible.builtin.command: passwd -u nagix
