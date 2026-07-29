@@ -247,7 +247,8 @@
         subject: "VM Provisioned: srv-{{ deployed_hostname_segment }}"
         body: "{{ email_body }}"
         secure: starttls
-   #  no_log: true
+      no_log: true
+      become: false
       delegate_to: localhost
 
   handlers:
