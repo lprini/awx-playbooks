@@ -9,7 +9,8 @@
     pve_node: "pve-nagixdtc"
     smtp_host: "smtp.skymail.net.br"
     smtp_port: 587
-    notify_email: "lucasprini@nagix.com.br"
+    smtp_from: "lucasprini@nagix.com.br"
+    notify_to: "suporte@nagix.com.br"
 
   tasks:
     - name: Terraform init
@@ -132,7 +133,8 @@
   vars:
     smtp_host: "smtp.skymail.net.br"
     smtp_port: 587
-    notify_email: "lucasprini@nagix.com.br"
+    smtp_from: "lucasprini@nagix.com.br"
+    notify_to: "suporte@nagix.com.br"
   tasks:
     - name: Set OS hostname on new VM
       ansible.builtin.hostname:
@@ -238,10 +240,10 @@
       community.general.mail:
         host: "{{ smtp_host }}"
         port: "{{ smtp_port }}"
-        username: "{{ notify_email }}"
+        username: "{{ smtp_from }}"
         password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
-        to: "{{ notify_email }}"
-        from: "{{ notify_email }}"
+        to: "{{ notify_to }}"
+        from: "{{ smtp_from }}"
         subject: "VM Provisioned: pve-{{ deployed_hostname_segment }}"
         body: "{{ email_body }}"
         secure: starttls
