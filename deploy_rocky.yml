@@ -108,12 +108,12 @@
         deployed_hostname_segment: "{{ vm_hostname }}"
         deployed_ip: "{{ vm_real_ip }}"
         deployed_ip_mode: "{{ ip_mode }}"
+        deployed_ssh_pubkey: "{{ ssh_public_key }}"
         do_install_tools: "{{ install_tools | default('yes') }}"
         do_install_acronis: "{{ install_acronis | default('no') }}"
         do_create_user: "{{ create_user | default('no') }}"
         new_username_var: "{{ new_username | default('') }}"
         new_user_password_var: "{{ new_user_password | default('') }}"
-        do_enable_password_auth: "{{ enable_password_auth | default('no') }}"
         admin_password_set: "{{ (admin_password | default('')) != '' }}"
         admin_password_value: "{{ admin_password | default('') }}"
         deployed_cpu: "{{ cpu_cores | default(2) }}"
@@ -134,9 +134,9 @@
     smtp_port: 587
     notify_email: "lucasprini@nagix.com.br"
   tasks:
-    - name: Set hostname on new VM
+    - name: Set OS hostname on new VM
       ansible.builtin.hostname:
-        name: "srv-{{ deployed_hostname_segment }}"
+        name: "{{ deployed_hostname_segment }}"
 
     - name: Install troubleshooting tools
       ansible.builtin.dnf:
@@ -171,18 +171,6 @@
         state: present
       when: do_install_acronis == 'yes'
 
-    # PLACEHOLDER — needs a real installer source next session
-    # - name: Download Acronis agent installer
-    #   ansible.builtin.get_url:
-    #     url: "{{ acronis_installer_url }}"
-    #     dest: /tmp/acronis_installer.sh
-    #     mode: '0755'
-    #   when: do_install_acronis == 'yes'
-    #
-    # - name: Run Acronis agent installer
-    #   ansible.builtin.command: /tmp/acronis_installer.sh -a
-    #   when: do_install_acronis == 'yes'
-
     - name: Create additional user
       ansible.builtin.user:
         name: "{{ new_username_var }}"
@@ -192,24 +180,34 @@
       when: do_create_user == 'yes' and new_username_var != ''
       no_log: true
 
-    - name: Unlock admin password if one was set
+    - name: Unlock nagix account password
       ansible.builtin.command: passwd -u nagix
-      when: admin_password_set | bool
       changed_when: false
 
-    - name: Enable SSH password authentication
+    - name: Ensure password authentication is enabled (production default)
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?PasswordAuthentication'
         line: 'PasswordAuthentication yes'
-      when: do_enable_password_auth == 'yes'
       notify: restart sshd
+
+    - name: Ensure root SSH login is disabled
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: restart sshd
+
+    - name: Apply sshd changes now
+      ansible.builtin.meta: flush_handlers
 
     - name: Build email body
       ansible.builtin.set_fact:
         email_body: |
-          VM Provisioned — srv-{{ deployed_hostname_segment }}
+          VM Provisioned
           ========================================
+          Proxmox VM Name:  pve-{{ deployed_hostname_segment }}
+          Hostname (OS):    {{ deployed_hostname_segment }}
           Proxmox Node:     {{ deployed_node }}
           Storage:          {{ deployed_storage }}
           VM ID:            {{ deployed_vm_id }}
@@ -223,9 +221,9 @@
 
           Access:
             Admin user:     nagix
-              SSH Key:      Yes (key-based login enabled)
-              Password:     {{ admin_password_value if admin_password_set else 'not set' }}
-              Password SSH: {{ 'enabled' if do_enable_password_auth == 'yes' else 'disabled' }}
+              Password:     {{ admin_password_value if admin_password_set else 'template default password (unchanged)' }}
+              SSH Access:   Password login only (bootstrap key revoked)
+            Root SSH:       Disabled
 
             Additional user: {{ new_username_var if (do_create_user == 'yes' and new_username_var != '') else 'none created' }}
               Password:      {{ new_user_password_var if (do_create_user == 'yes' and new_username_var != '') else 'n/a' }}
@@ -244,12 +242,18 @@
         password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
         to: "{{ notify_email }}"
         from: "{{ notify_email }}"
-        subject: "VM Provisioned: srv-{{ deployed_hostname_segment }}"
+        subject: "VM Provisioned: pve-{{ deployed_hostname_segment }}"
         body: "{{ email_body }}"
         secure: starttls
       no_log: true
       become: false
       delegate_to: localhost
+
+    - name: Remove Terraform/AWX bootstrap SSH key from nagix
+      ansible.posix.authorized_key:
+        user: nagix
+        key: "{{ deployed_ssh_pubkey }}"
+        state: absent
 
   handlers:
     - name: restart sshd

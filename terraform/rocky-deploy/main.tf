@@ -1,5 +1,5 @@
 locals {
-  vm_name = "srv-${var.vm_hostname}"
+  vm_name =  pve-${var.vm_hostname}"
 }
 
 resource "proxmox_virtual_environment_vm" "deploy" {
