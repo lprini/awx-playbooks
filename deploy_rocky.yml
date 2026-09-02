@@ -201,7 +201,13 @@
         state: present
       when: do_install_tools == 'yes'
 
-    - name: Install kernel headers and build tools for Acronis agent
+    - name: Enable CRB (CodeReady Builder) repository for dependencies
+      ansible.builtin.command: dnf config-manager --set-enabled crb
+      changed_when: false
+      failed_when: false
+      when: do_install_acronis == 'yes'
+
+    - name: Install kernel headers, build tools, and compatibility libs for Acronis
       ansible.builtin.dnf:
         name:
           - "kernel-devel-{{ ansible_kernel }}"
@@ -211,6 +217,8 @@
           - perl
           - elfutils-libelf-devel
           - dkms
+          - libnsl
+          - libxcrypt-compat
         state: present
       when: do_install_acronis == 'yes'
 
@@ -222,11 +230,23 @@
         timeout: 300
       when: do_install_acronis == 'yes'
 
-    - name: Run silent Acronis installation (skipping auto-registration)
+    - name: Run silent Acronis installation
       ansible.builtin.command: >
         /tmp/CyberProtectAgentLinux64.bin -a --silent --skip-registration
       when: do_install_acronis == 'yes'
       changed_when: true
+
+    - name: Ensure acronis_mms service is started and enabled
+      ansible.builtin.systemd:
+        name: acronis_mms
+        state: started
+        enabled: true
+      when: do_install_acronis == 'yes'
+
+    - name: Wait 15 seconds for Acronis MMS service socket to initialize
+      ansible.builtin.pause:
+        seconds: 15
+      when: do_install_acronis == 'yes'
 
     - name: Generate Acronis registration code against BR02 Cloud
       ansible.builtin.command: >
@@ -235,16 +255,20 @@
       when: do_install_acronis == 'yes'
       changed_when: false
       failed_when: false
+      retries: 3
+      delay: 5
+      until: acronis_reg_output.rc == 0
 
     - name: Extract registration code from output
       ansible.builtin.set_fact:
-        acronis_code: "{{ acronis_reg_output.stdout | regex_search('([A-Z0-9]{4}-[A-Z0-9]{4})') | default('Code generation failed', true) }}"
-      when: do_install_acronis == 'yes' and acronis_reg_output.rc == 0
+        acronis_code: "{{ (acronis_reg_output.stdout + acronis_reg_output.stderr) | regex_search('([A-Z0-9]{4}-[A-Z0-9]{4})') | default('Code generation failed', true) }}"
+      when: do_install_acronis == 'yes'
 
     - name: Clean up Acronis installer binary
       ansible.builtin.file:
         path: /tmp/CyberProtectAgentLinux64.bin
         state: absent
+        ignore_errors: true
       when: do_install_acronis == 'yes'
 
     - name: Create additional user
