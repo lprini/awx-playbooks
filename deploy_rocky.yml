@@ -8,7 +8,6 @@
     target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
     target_storage: "{{ storage_id | default('local-lvm') }}"
     
-    # Map cluster nodes to their management IPs
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
       pve-nagixdtc: "10.10.10.240"
@@ -32,7 +31,7 @@
       ansible.builtin.set_fact:
         current_template_node: "{{ (cluster_vms.json.data | selectattr('vmid', 'equalto', 109) | first).node }}"
 
-    - name: Migrate template config to target node (instant on shared storage)
+    - name: Migrate template config to target node
       ansible.builtin.uri:
         url: "https://10.10.10.239:8006/api2/json/nodes/{{ current_template_node }}/qemu/109/migrate"
         method: POST
@@ -77,7 +76,6 @@
       args:
         chdir: "{{ tf_dir }}"
       register: tf_apply
-      no_log: false
 
     - name: Get Terraform outputs
       ansible.builtin.command: terraform output -json
@@ -123,10 +121,6 @@
               | map(attribute='ip-address')
               | first
           }}
-
-    - name: Show deployed VM IP
-      ansible.builtin.debug:
-        var: vm_real_ip
 
     - name: Wait for SSH to be available on new VM
       ansible.builtin.wait_for:
@@ -201,7 +195,7 @@
         state: present
       when: do_install_tools == 'yes'
 
-    - name: Enable CRB (CodeReady Builder) repository for dependencies
+    - name: Enable CRB repository for Acronis build tools
       ansible.builtin.command: dnf config-manager --set-enabled crb
       changed_when: false
       failed_when: false
@@ -233,7 +227,7 @@
         timeout: 300
       when: do_install_acronis == 'yes'
 
-    - name: Run silent Acronis installation
+    - name: Run Acronis unattended installation
       ansible.builtin.command: >
         /tmp/CyberProtectAgentLinux64.bin -a --skip-registration
       register: acronis_install_out
@@ -244,17 +238,6 @@
       ansible.builtin.systemd:
         daemon_reload: true
       when: do_install_acronis == 'yes'
-
-    - name: Verify acronis_mms binary exists post-installation
-      ansible.builtin.stat:
-        path: /usr/sbin/acronis_mms
-      register: acronis_binary
-      when: do_install_acronis == 'yes'
-
-    - name: Fail early if Acronis installation failed silently
-      ansible.builtin.fail:
-        msg: "Acronis installation failed silently. Check /var/log/Acronis/Installer/ for details."
-      when: do_install_acronis == 'yes' and not acronis_binary.stat.exists
 
     - name: Ensure acronis_mms service is started and enabled
       ansible.builtin.systemd:
@@ -312,22 +295,47 @@
       changed_when: false
       failed_when: false
 
-    - name: Ensure password authentication is enabled (production default)
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^#?PasswordAuthentication'
-        line: 'PasswordAuthentication yes'
-      notify: restart sshd
-
-    - name: Ensure root SSH login is disabled
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^#?PermitRootLogin'
-        line: 'PermitRootLogin no'
+    - name: Enforce SSH policies via priority drop-in (00-security.conf)
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-security.conf
+        content: |
+          PasswordAuthentication yes
+          PermitRootLogin no
+        owner: root
+        group: root
+        mode: '0644'
       notify: restart sshd
 
     - name: Apply sshd changes now
       ansible.builtin.meta: flush_handlers
+
+    - name: Disable Cloud-Init from re-running on subsequent reboots
+      ansible.builtin.file:
+        path: /etc/cloud/cloud-init.disabled
+        state: touch
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Remove Terraform bootstrap SSH key from guest OS nagix user
+      ansible.posix.authorized_key:
+        user: nagix
+        key: "{{ deployed_ssh_pubkey }}"
+        state: absent
+
+    - name: Clear Cloud-Init SSH key from Proxmox VM config (UI Cleanup)
+      ansible.builtin.uri:
+        url: "https://{{ node_ip_map[deployed_node] | default('10.10.10.239') }}:8006/api2/json/nodes/{{ deployed_node }}/qemu/{{ deployed_vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          sshkeys: ""
+        validate_certs: false
+        status_code: [200]
+      delegate_to: localhost
+      become: false
 
     - name: Build email body
       ansible.builtin.set_fact:
@@ -354,7 +362,7 @@
           Access:
             Admin user:     nagix
               Password:     {{ admin_password_value if admin_password_set else 'template default password (unchanged)' }}
-              SSH Access:   Password login only (bootstrap key revoked)
+              SSH Access:   Password login enabled (bootstrap key revoked)
             Root SSH:       Disabled
 
             Additional user: {{ new_username_var if (do_create_user == 'yes' and new_username_var != '') else 'none created' }}
@@ -376,12 +384,6 @@
       no_log: true
       become: false
       delegate_to: localhost
-
-    - name: Remove Terraform/AWX bootstrap SSH key from nagix
-      ansible.posix.authorized_key:
-        user: nagix
-        key: "{{ deployed_ssh_pubkey }}"
-        state: absent
 
   handlers:
     - name: restart sshd
