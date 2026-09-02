@@ -270,8 +270,7 @@
     - name: Clean up Acronis installer binary
       ansible.builtin.file:
         path: /tmp/CyberProtectAgentLinux64.bin
-        state: absent
-        ignore_errors: true
+        state: absent        
       when: do_install_acronis == 'yes'
 
     - name: Create additional user
