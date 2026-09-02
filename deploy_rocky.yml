@@ -253,7 +253,7 @@
 
     - name: Generate Acronis registration code against BR02 Cloud
       ansible.builtin.command: >
-        /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -a https://br02-cloud.acronis.com --display-code
+        sudo /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -o register -t cloud -a https://br02-cloud.acronis.com --token DB31-0CB8-4537
       register: acronis_reg_output
       when: do_install_acronis == 'yes'
       changed_when: false
