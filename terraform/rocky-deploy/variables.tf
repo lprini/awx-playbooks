@@ -35,8 +35,9 @@ variable "template_vm_id" {
 }
 
 variable "node_name" {
-  type    = string
-  default = "pve-nagixdtc"
+  type        = string
+  description = "Target Proxmox node where the VM will be created"
+  default     = "host-pve-nagixdtc02"
 }
 
 variable "ssh_public_key" {
@@ -77,6 +78,7 @@ variable "admin_password" {
 }
 
 variable "storage_id" {
-  type    = string
-  default = "ISCSI-CISCO-R5"
+  type        = string
+  description = "Target storage pool for VM disks and cloud-init"
+  default     = "local-lvm"
 }
