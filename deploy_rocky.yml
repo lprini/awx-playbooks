@@ -7,7 +7,10 @@
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
     target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
     target_storage: "{{ storage_id | default('local-lvm') }}"
-    pve_endpoint: "https://10.10.10.239:8006"
+    node_ip_map:
+      host-pve-nagixdtc02: "10.10.10.239"
+      pve-nagixdtc: "10.10.10.240"
+    pve_endpoint: "https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006"
     smtp_host: "smtp.skymail.net.br"
     smtp_port: 587
     smtp_from: "lucasprini@nagix.com.br"
