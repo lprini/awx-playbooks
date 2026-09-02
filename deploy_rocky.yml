@@ -214,6 +214,39 @@
         state: present
       when: do_install_acronis == 'yes'
 
+    - name: Download Acronis Cyber Protect Agent installer from BR02
+      ansible.builtin.get_url:
+        url: "https://br02-cloud.acronis.com/bc/api/ams/links/agents/redirect?language=multi&channel=CURRENT&system=linux&architecture=64&productType=enterprise&login=beebe6bb-903f-4d78-95b8-ede3f8f35e4c&white_labeled=0"
+        dest: /tmp/CyberProtectAgentLinux64.bin
+        mode: '0755'
+        timeout: 300
+      when: do_install_acronis == 'yes'
+
+    - name: Run silent Acronis installation (skipping auto-registration)
+      ansible.builtin.command: >
+        /tmp/CyberProtectAgentLinux64.bin -a --silent --skip-registration
+      when: do_install_acronis == 'yes'
+      changed_when: true
+
+    - name: Generate Acronis registration code against BR02 Cloud
+      ansible.builtin.command: >
+        /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -a https://br02-cloud.acronis.com --display-code
+      register: acronis_reg_output
+      when: do_install_acronis == 'yes'
+      changed_when: false
+      failed_when: false
+
+    - name: Extract registration code from output
+      ansible.builtin.set_fact:
+        acronis_code: "{{ acronis_reg_output.stdout | regex_search('([A-Z0-9]{4}-[A-Z0-9]{4})') | default('Code generation failed', true) }}"
+      when: do_install_acronis == 'yes' and acronis_reg_output.rc == 0
+
+    - name: Clean up Acronis installer binary
+      ansible.builtin.file:
+        path: /tmp/CyberProtectAgentLinux64.bin
+        state: absent
+      when: do_install_acronis == 'yes'
+
     - name: Create additional user
       ansible.builtin.user:
         name: "{{ new_username_var }}"
@@ -262,6 +295,10 @@
             Disk:           {{ deployed_disk }} GB
             Extra Disk:     {{ deployed_extra_disk }}{{ ' - ' + deployed_extra_disk_size + ' GB' if deployed_extra_disk == 'yes' else '' }}
 
+          Backup & Security:
+            Acronis Installed: {{ do_install_acronis }}
+            Registration Code: {{ acronis_code | default('N/A (Agent not installed)') }}
+
           Access:
             Admin user:     nagix
               Password:     {{ admin_password_value if admin_password_set else 'template default password (unchanged)' }}
@@ -270,10 +307,6 @@
 
             Additional user: {{ new_username_var if (do_create_user == 'yes' and new_username_var != '') else 'none created' }}
               Password:     {{ new_user_password_var if (do_create_user == 'yes' and new_username_var != '') else 'n/a' }}
-
-          Packages installed:
-            Troubleshooting tools: {{ do_install_tools }}
-            Acronis agent:         {{ do_install_acronis }}
           ========================================
       no_log: true
 
