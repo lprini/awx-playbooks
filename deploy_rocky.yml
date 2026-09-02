@@ -235,7 +235,7 @@
 
     - name: Run silent Acronis installation
       ansible.builtin.command: >
-        /tmp/CyberProtectAgentLinux64.bin -a --silent --skip-registration
+        /tmp/CyberProtectAgentLinux64.bin -a --skip-registration
       register: acronis_install_out
       when: do_install_acronis == 'yes'
       changed_when: true
