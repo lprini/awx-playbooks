@@ -143,6 +143,12 @@
       ansible.builtin.hostname:
         name: "{{ deployed_hostname_segment }}"
 
+    - name: Install EPEL repository
+      ansible.builtin.dnf:
+        name: epel-release
+        state: present
+      when: do_install_tools == 'yes'
+
     - name: Install troubleshooting tools
       ansible.builtin.dnf:
         name:
