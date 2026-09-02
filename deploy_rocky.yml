@@ -207,7 +207,7 @@
       failed_when: false
       when: do_install_acronis == 'yes'
 
-    - name: Install kernel headers, build tools, and compatibility libs for Acronis
+    - name: Install required dependencies and build tools for Acronis
       ansible.builtin.dnf:
         name:
           - "kernel-devel-{{ ansible_kernel }}"
@@ -219,6 +219,9 @@
           - dkms
           - libnsl
           - libxcrypt-compat
+          - iptables
+          - kmod
+          - policycoreutils
         state: present
       when: do_install_acronis == 'yes'
 
@@ -233,8 +236,25 @@
     - name: Run silent Acronis installation
       ansible.builtin.command: >
         /tmp/CyberProtectAgentLinux64.bin -a --silent --skip-registration
+      register: acronis_install_out
       when: do_install_acronis == 'yes'
       changed_when: true
+
+    - name: Reload systemd daemon to discover new services
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: do_install_acronis == 'yes'
+
+    - name: Verify acronis_mms binary exists post-installation
+      ansible.builtin.stat:
+        path: /usr/sbin/acronis_mms
+      register: acronis_binary
+      when: do_install_acronis == 'yes'
+
+    - name: Fail early if Acronis installation failed silently
+      ansible.builtin.fail:
+        msg: "Acronis installation failed silently. Check /var/log/Acronis/Installer/ for details."
+      when: do_install_acronis == 'yes' and not acronis_binary.stat.exists
 
     - name: Ensure acronis_mms service is started and enabled
       ansible.builtin.systemd:
@@ -280,9 +300,17 @@
       when: do_create_user == 'yes' and new_username_var != ''
       no_log: true
 
-    - name: Unlock nagix account password
+    - name: Set nagix user password explicitly if admin_password provided
+      ansible.builtin.user:
+        name: nagix
+        password: "{{ admin_password_value | password_hash('sha512') }}"
+      when: admin_password_set
+      no_log: true
+
+    - name: Unlock nagix account password for console access
       ansible.builtin.command: passwd -u nagix
       changed_when: false
+      failed_when: false
 
     - name: Ensure password authentication is enabled (production default)
       ansible.builtin.lineinfile:
