@@ -5,26 +5,61 @@
   vars:
     tf_dir: "{{ playbook_dir }}/terraform/rocky-deploy"
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
-    # Always route API requests to Node 1 where template configs reside
-    pve_endpoint: "https://10.10.10.239:8006"
     target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
     target_storage: "{{ storage_id | default('local-lvm') }}"
+    
+    # Map cluster nodes to their management IPs
+    node_ip_map:
+      host-pve-nagixdtc02: "10.10.10.239"
+      pve-nagixdtc: "10.10.10.240"
+
     smtp_host: "smtp.skymail.net.br"
     smtp_port: 587
     smtp_from: "lucasprini@nagix.com.br"
     notify_to: "suporte@nagix.com.br"
 
   tasks:
+    - name: Query Proxmox cluster to locate template 109
+      ansible.builtin.uri:
+        url: "https://10.10.10.239:8006/api2/json/cluster/resources?type=vm"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+      register: cluster_vms
+
+    - name: Store current node of template 109
+      ansible.builtin.set_fact:
+        current_template_node: "{{ (cluster_vms.json.data | selectattr('vmid', 'equalto', 109) | first).node }}"
+
+    - name: Migrate template config to target node (instant on shared storage)
+      ansible.builtin.uri:
+        url: "https://10.10.10.239:8006/api2/json/nodes/{{ current_template_node }}/qemu/109/migrate"
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        body_format: json
+        body:
+          target: "{{ target_node }}"
+        validate_certs: false
+        status_code: [200]
+      when: current_template_node != target_node
+
+    - name: Wait 3 seconds for template config registration
+      ansible.builtin.pause:
+        seconds: 3
+      when: current_template_node != target_node
+
     - name: Terraform init
       ansible.builtin.command: terraform init -input=false
       args:
         chdir: "{{ tf_dir }}"
       changed_when: false
 
-    - name: Terraform apply
+    - name: Terraform apply directly to target node
       ansible.builtin.command: >
         terraform apply -auto-approve -input=false
-        -var="pve_endpoint={{ pve_endpoint }}/api2/json"
+        -var="pve_endpoint=https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006/api2/json"
         -var="pve_api_token=terraform@pve!provider={{ pve_token_secret }}"
         -var="node_name={{ target_node }}"
         -var="storage_id={{ target_storage }}"
@@ -55,13 +90,9 @@
       ansible.builtin.set_fact:
         new_vm_id: "{{ (tf_output.stdout | from_json).vm_id.value }}"
 
-    - name: Show new VM ID
-      ansible.builtin.debug:
-        var: new_vm_id
-
     - name: Poll Proxmox API for agent-reported IP
       ansible.builtin.uri:
-        url: "{{ pve_endpoint }}/api2/json/nodes/{{ target_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
+        url: "https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
         method: GET
         headers:
           Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
