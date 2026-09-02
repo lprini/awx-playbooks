@@ -5,8 +5,9 @@
   vars:
     tf_dir: "{{ playbook_dir }}/terraform/rocky-deploy"
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
-    pve_endpoint: "https://10.10.10.240:8006"
-    pve_node: "pve-nagixdtc"
+    target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
+    target_storage: "{{ storage_id | default('local-lvm') }}"
+    pve_endpoint: "https://10.10.10.239:8006"
     smtp_host: "smtp.skymail.net.br"
     smtp_port: 587
     smtp_from: "lucasprini@nagix.com.br"
@@ -22,8 +23,10 @@
     - name: Terraform apply
       ansible.builtin.command: >
         terraform apply -auto-approve -input=false
-        -var="pve_endpoint={{ pve_endpoint }}/"
+        -var="pve_endpoint={{ pve_endpoint }}/api2/json"
         -var="pve_api_token=terraform@pve!provider={{ pve_token_secret }}"
+        -var="node_name={{ target_node }}"
+        -var="storage_id={{ target_storage }}"
         -var="vm_hostname={{ vm_hostname }}"
         -var="ip_mode={{ ip_mode }}"
         -var="vm_ip={{ vm_ip | default('') }}"
@@ -38,7 +41,7 @@
       args:
         chdir: "{{ tf_dir }}"
       register: tf_apply
-      no_log: true
+      no_log: false
 
     - name: Get Terraform outputs
       ansible.builtin.command: terraform output -json
@@ -57,7 +60,7 @@
 
     - name: Poll Proxmox API for agent-reported IP
       ansible.builtin.uri:
-        url: "{{ pve_endpoint }}/api2/json/nodes/{{ pve_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
+        url: "{{ pve_endpoint }}/api2/json/nodes/{{ target_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
         method: GET
         headers:
           Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
@@ -123,8 +126,8 @@
         deployed_extra_disk: "{{ add_extra_disk | default('no') }}"
         deployed_extra_disk_size: "{{ extra_disk_size_gb | default(20) }}"
         deployed_vm_id: "{{ new_vm_id }}"
-        deployed_storage: "ISCSI-CISCO-R5"
-        deployed_node: "{{ pve_node }}"
+        deployed_storage: "{{ target_storage }}"
+        deployed_node: "{{ target_node }}"
 
 - name: Configure new VM
   hosts: new_vms
@@ -228,7 +231,7 @@
             Root SSH:       Disabled
 
             Additional user: {{ new_username_var if (do_create_user == 'yes' and new_username_var != '') else 'none created' }}
-              Password:      {{ new_user_password_var if (do_create_user == 'yes' and new_username_var != '') else 'n/a' }}
+              Password:     {{ new_user_password_var if (do_create_user == 'yes' and new_username_var != '') else 'n/a' }}
 
           Packages installed:
             Troubleshooting tools: {{ do_install_tools }}
