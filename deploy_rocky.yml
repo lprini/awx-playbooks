@@ -141,6 +141,9 @@
         deployed_ssh_pubkey: "{{ ssh_public_key }}"
         do_install_tools: "{{ install_tools | default('yes') }}"
         do_install_acronis: "{{ install_acronis | default('no') }}"
+        acronis_token_var: "{{ acronis_token | default('DB31-0CB8-4537') }}"
+        do_install_zabbix: "{{ install_zabbix | default('no') }}"
+        zabbix_proxy_ip_var: "{{ zabbix_proxy_ip | default('') }}"
         do_create_user: "{{ create_user | default('no') }}"
         new_username_var: "{{ new_username | default('') }}"
         new_user_password_var: "{{ new_user_password | default('') }}"
@@ -195,6 +198,7 @@
         state: present
       when: do_install_tools == 'yes'
 
+    # --- ACRONIS INSTALLATION ---
     - name: Enable CRB repository for Acronis build tools
       ansible.builtin.command: dnf config-manager --set-enabled crb
       changed_when: false
@@ -246,33 +250,84 @@
         enabled: true
       when: do_install_acronis == 'yes'
 
-    - name: Wait 15 seconds for Acronis MMS service socket to initialize
-      ansible.builtin.pause:
-        seconds: 15
-      when: do_install_acronis == 'yes'
-
-    - name: Generate Acronis registration code against BR02 Cloud
+    - name: Register Acronis Agent to Nagix_Tecnologia via Token
       ansible.builtin.command: >
-        sudo /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -o register -t cloud -a https://br02-cloud.acronis.com --token DB31-0CB8-4537
+        /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -o register -t cloud -a https://br02-cloud.acronis.com --token {{ acronis_token_var }}
       register: acronis_reg_output
       when: do_install_acronis == 'yes'
-      changed_when: false
-      failed_when: false
-      retries: 3
-      delay: 5
-      until: acronis_reg_output.rc == 0
-
-    - name: Extract registration code from output
-      ansible.builtin.set_fact:
-        acronis_code: "{{ (acronis_reg_output.stdout + acronis_reg_output.stderr) | regex_search('([A-Z0-9]{4}-[A-Z0-9]{4})') | default('Code generation failed', true) }}"
-      when: do_install_acronis == 'yes'
+      changed_when: true
 
     - name: Clean up Acronis installer binary
       ansible.builtin.file:
         path: /tmp/CyberProtectAgentLinux64.bin
-        state: absent        
+        state: absent
       when: do_install_acronis == 'yes'
 
+    # --- ZABBIX AGENT 2 INSTALLATION ---
+    - name: Add Zabbix 7.0 official repository RPM
+      ansible.builtin.dnf:
+        name: "https://repo.zabbix.com/zabbix/7.0/rhel/9/x86_64/zabbix-release-7.0-2.el9.noarch.rpm"
+        state: present
+        disable_gpg_check: true
+      when: do_install_zabbix == 'yes'
+
+    - name: Clean DNF cache post repository addition
+      ansible.builtin.command: dnf clean all
+      changed_when: false
+      when: do_install_zabbix == 'yes'
+
+    - name: Install Zabbix Agent 2
+      ansible.builtin.dnf:
+        name: zabbix-agent2
+        state: present
+      when: do_install_zabbix == 'yes'
+
+    - name: Configure Zabbix Agent 2 Server IP
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^Server='
+        line: "Server={{ zabbix_proxy_ip_var }}"
+      when: do_install_zabbix == 'yes'
+      notify: restart zabbix-agent2
+
+    - name: Configure Zabbix Agent 2 ServerActive IP
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^ServerActive='
+        line: "ServerActive={{ zabbix_proxy_ip_var }}"
+      when: do_install_zabbix == 'yes'
+      notify: restart zabbix-agent2
+
+    - name: Configure Zabbix Agent 2 Hostname
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^Hostname='
+        line: "Hostname={{ deployed_hostname_segment }}"
+      when: do_install_zabbix == 'yes'
+      notify: restart zabbix-agent2
+
+    - name: Check if firewalld is active
+      ansible.builtin.command: firewall-cmd --state
+      register: firewalld_check
+      changed_when: false
+      failed_when: false
+      when: do_install_zabbix == 'yes'
+
+    - name: Open port 10050/tcp in firewalld for Zabbix Proxy queries
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - firewall-cmd --permanent --add-port=10050/tcp
+        - firewall-cmd --reload
+      when: do_install_zabbix == 'yes' and firewalld_check.rc == 0
+
+    - name: Ensure Zabbix Agent 2 service is started and enabled
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: started
+        enabled: true
+      when: do_install_zabbix == 'yes'
+
+    # --- USER & SECURITY HARDENING ---
     - name: Create additional user
       ansible.builtin.user:
         name: "{{ new_username_var }}"
@@ -282,17 +337,18 @@
       when: do_create_user == 'yes' and new_username_var != ''
       no_log: true
 
-    - name: Set nagix user password explicitly if admin_password provided
+    - name: Ensure nagix user password is explicitly set and unlocked
       ansible.builtin.user:
         name: nagix
-        password: "{{ admin_password_value | password_hash('sha512') }}"
-      when: admin_password_set
+        password: "{{ (admin_password_value if admin_password_set else 'N@gix!#1') | password_hash('sha512') }}"
+        update_password: always
       no_log: true
 
-    - name: Unlock nagix account password for console access
-      ansible.builtin.command: passwd -u nagix
-      changed_when: false
-      failed_when: false
+    - name: Remove Cloud-Init SSH configuration drop-in file
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        state: absent
+      notify: restart sshd
 
     - name: Enforce SSH policies via priority drop-in (00-security.conf)
       ansible.builtin.copy:
@@ -336,6 +392,7 @@
       delegate_to: localhost
       become: false
 
+    # --- EMAIL NOTIFICATION ---
     - name: Build email body
       ansible.builtin.set_fact:
         email_body: |
@@ -354,13 +411,13 @@
             Disk:           {{ deployed_disk }} GB
             Extra Disk:     {{ deployed_extra_disk }}{{ ' - ' + deployed_extra_disk_size + ' GB' if deployed_extra_disk == 'yes' else '' }}
 
-          Backup & Security:
-            Acronis Installed: {{ do_install_acronis }}
-            Registration Code: {{ acronis_code | default('N/A (Agent not installed)') }}
+          Backup & Monitoring:
+            Acronis Agent:     {{ 'Installed & Registered to Nagix_Tecnologia via Token' if do_install_acronis == 'yes' else 'Not Installed' }}
+            Zabbix Agent 2:    {{ do_install_zabbix }}{{ ' (Proxy: ' + zabbix_proxy_ip_var + ')' if do_install_zabbix == 'yes' else '' }}
 
           Access:
             Admin user:     nagix
-              Password:     {{ admin_password_value if admin_password_set else 'template default password (unchanged)' }}
+              Password:     {{ admin_password_value if admin_password_set else 'N@gix!#1' }}
               SSH Access:   Password login enabled (bootstrap key revoked)
             Root SSH:       Disabled
 
@@ -388,4 +445,9 @@
     - name: restart sshd
       ansible.builtin.service:
         name: sshd
+        state: restarted
+
+    - name: restart zabbix-agent2
+      ansible.builtin.service:
+        name: zabbix-agent2
         state: restarted
