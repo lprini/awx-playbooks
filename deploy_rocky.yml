@@ -7,6 +7,10 @@
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
     target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
     target_storage: "{{ storage_id | default('local-lvm') }}"
+
+    # Survey Default Variables for Monitoring / Security Agents
+    install_wazuh: "yes"
+    wazuh_manager_ip: "172.24.0.12"
     
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
@@ -144,6 +148,8 @@
         acronis_token_var: "{{ acronis_token | default('DB31-0CB8-4537') }}"
         do_install_zabbix: "{{ install_zabbix | default('no') }}"
         zabbix_proxy_ip_var: "{{ zabbix_proxy_ip | default('') }}"
+        do_install_wazuh: "{{ install_wazuh | default('yes') }}"
+        wazuh_manager_ip_var: "{{ wazuh_manager_ip | default('172.24.0.12') }}"
         do_create_user: "{{ create_user | default('no') }}"
         new_username_var: "{{ new_username | default('') }}"
         new_user_password_var: "{{ new_user_password | default('') }}"
@@ -327,6 +333,49 @@
         enabled: true
       when: do_install_zabbix == 'yes'
 
+    # --- WAZUH AGENT INSTALLATION ---
+    - name: Download Wazuh Agent RPM package
+      ansible.builtin.get_url:
+        url: "https://packages.wazuh.com/4.x/yum/wazuh-agent-4.14.2-1.x86_64.rpm"
+        dest: /tmp/wazuh-agent-4.14.2-1.x86_64.rpm
+        mode: '0644'
+      when: do_install_wazuh == 'yes'
+
+    - name: Install Wazuh Agent RPM with Manager IP
+      ansible.builtin.dnf:
+        name: /tmp/wazuh-agent-4.14.2-1.x86_64.rpm
+        state: present
+        disable_gpg_check: true
+      environment:
+        WAZUH_MANAGER: "{{ wazuh_manager_ip_var }}"
+      when: do_install_wazuh == 'yes'
+
+    - name: Ensure Wazuh Manager address is set in ossec.conf
+      ansible.builtin.replace:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*?</address>'
+        replace: '<address>{{ wazuh_manager_ip_var }}</address>'
+      when: do_install_wazuh == 'yes'
+      notify: restart wazuh-agent
+
+    - name: Clean up Wazuh RPM installer file
+      ansible.builtin.file:
+        path: /tmp/wazuh-agent-4.14.2-1.x86_64.rpm
+        state: absent
+      when: do_install_wazuh == 'yes'
+
+    - name: Reload systemd daemon for Wazuh
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: do_install_wazuh == 'yes'
+
+    - name: Ensure wazuh-agent service is started and enabled
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: started
+        enabled: true
+      when: do_install_wazuh == 'yes'
+
     # --- USER & SECURITY HARDENING ---
     - name: Create additional user
       ansible.builtin.user:
@@ -414,6 +463,7 @@
           Backup & Monitoring:
             Acronis Agent:     {{ 'Installed & Registered to Nagix_Tecnologia via Token' if do_install_acronis == 'yes' else 'Not Installed' }}
             Zabbix Agent 2:    {{ do_install_zabbix }}{{ ' (Proxy: ' + zabbix_proxy_ip_var + ')' if do_install_zabbix == 'yes' else '' }}
+            Wazuh Agent:       {{ 'Installed & Pointed to ' + wazuh_manager_ip_var if do_install_wazuh == 'yes' else 'Not Installed' }}
 
           Access:
             Admin user:     nagix
@@ -450,4 +500,9 @@
     - name: restart zabbix-agent2
       ansible.builtin.service:
         name: zabbix-agent2
+        state: restarted
+
+    - name: restart wazuh-agent
+      ansible.builtin.service:
+        name: wazuh-agent
         state: restarted
