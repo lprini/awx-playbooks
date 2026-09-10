@@ -18,7 +18,7 @@
     notify_to: "suporte@nagix.com.br"
 
   tasks:
-    - name: Query Proxmox cluster to locate template 109
+    - name: Query Proxmox cluster to locate template 127
       ansible.builtin.uri:
         url: "https://10.10.10.239:8006/api2/json/cluster/resources?type=vm"
         method: GET
@@ -27,13 +27,13 @@
         validate_certs: false
       register: cluster_vms
 
-    - name: Store current node of template 109
+    - name: Store current node of template 127
       ansible.builtin.set_fact:
-        current_template_node: "{{ (cluster_vms.json.data | selectattr('vmid', 'equalto', 109) | first).node }}"
+        current_template_node: "{{ (cluster_vms.json.data | selectattr('vmid', 'equalto', 127) | first).node }}"
 
     - name: Migrate template config to target node
       ansible.builtin.uri:
-        url: "https://10.10.10.239:8006/api2/json/nodes/{{ current_template_node }}/qemu/109/migrate"
+        url: "https://10.10.10.239:8006/api2/json/nodes/{{ current_template_node }}/qemu/127/migrate"
         method: POST
         headers:
           Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
