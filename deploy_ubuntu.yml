@@ -1,0 +1,60 @@
+---
+- name: Deploy Ubuntu 24.04 VM via Terraform
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    tf_dir: "{{ playbook_dir }}/terraform/ubuntu-deploy"
+
+  tasks:
+    - name: Run Terraform Apply
+      community.general.terraform:
+        project_path: "{{ tf_dir }}"
+        state: present
+        force_apply: true
+        variables:
+          vm_name: "{{ vm_name }}"
+          vm_id: "{{ vm_id }}"
+          cores: "{{ cores | default(2) }}"
+          memory: "{{ memory | default(2048) }}"
+      register: tf_result
+
+    - name: Display Terraform Output
+      ansible.builtin.debug:
+        var: tf_result
+
+- name: Post-Configure Ubuntu VM
+  hosts: "{{ vm_name }}"
+  gather_facts: true
+  become: true
+  vars:
+    wazuh_manager_ip: "{{ wazuh_manager_ip | default('172.24.0.12') }}"
+    install_wazuh: "{{ install_wazuh | default('yes') }}"
+
+  tasks:
+    - name: Install and Configure Wazuh Agent
+      when: install_wazuh == 'yes'
+      block:
+        - name: Download Wazuh Agent DEB Package
+          ansible.builtin.get_url:
+            url: "https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.9.0-1_amd64.deb"
+            dest: "/tmp/wazuh-agent.deb"
+            mode: '0644'
+
+        - name: Install Wazuh Agent Package
+          ansible.builtin.apt:
+            deb: "/tmp/wazuh-agent.deb"
+            state: present
+
+        - name: Set Wazuh Manager IP Address
+          ansible.builtin.lineinfile:
+            path: /var/ossec/etc/ossec.conf
+            regexp: '<address>.*</address>'
+            line: "        <address>{{ wazuh_manager_ip }}</address>"
+
+        - name: Enable and Start Wazuh Agent Service
+          ansible.builtin.systemd:
+            name: wazuh-agent
+            state: started
+            enabled: true
