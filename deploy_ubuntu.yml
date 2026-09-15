@@ -10,13 +10,13 @@
     target_storage: "{{ storage_id | default('local-lvm') }}"
     template_vm_id: "{{ template_id | default(129) }}"
 
-    # Monitoring / Security Agent Defaults
+    # Monitoring / Security Agent Defaults & Hardcoded Acronis Token
     install_wazuh: "{{ do_install_wazuh | default('yes') }}"
     wazuh_manager_ip: "{{ wazuh_manager_ip_var | default('172.24.0.12') }}"
     install_zabbix: "{{ do_install_zabbix | default('no') }}"
     zabbix_proxy_ip: "{{ zabbix_proxy_ip_var | default('') }}"
     install_acronis: "{{ do_install_acronis | default('no') }}"
-    acronis_token: "{{ acronis_token_var | default('') }}"
+    acronis_token: "YOUR_HARDCODED_ACRONIS_TOKEN_HERE" # Hardcoded globally just like Rocky configuration
 
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
