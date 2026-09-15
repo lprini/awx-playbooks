@@ -1,6 +1,5 @@
 variable "pve_endpoint" {
-  type    = string
-  default = "https://host-pve-nagixdtc02:8006/api2/json"
+  type = string
 }
 
 variable "pve_api_token" {
@@ -32,7 +31,7 @@ variable "vm_gateway" {
 
 variable "template_vm_id" {
   type    = number
-  default = 126
+  default = 128
 }
 
 variable "node_name" {
@@ -44,7 +43,6 @@ variable "node_name" {
 variable "ssh_public_key" {
   type        = string
   description = "SSH public key to inject into the new VM"
-  default     = ""
 }
 
 variable "cpu_cores" {
@@ -59,8 +57,24 @@ variable "memory_mb" {
 
 variable "disk_size_gb" {
   type        = number
-  default     = 20
-  description = "Main disk size in GB."
+  default     = 40
+  description = "Main disk size in GB. Proxmox can only grow disks, never shrink."
+}
+
+variable "add_extra_disk" {
+  type    = string
+  default = "no"
+}
+
+variable "extra_disk_size_gb" {
+  type    = number
+  default = 20
+}
+
+variable "admin_password" {
+  type      = string
+  sensitive = true
+  default   = ""
 }
 
 variable "storage_id" {

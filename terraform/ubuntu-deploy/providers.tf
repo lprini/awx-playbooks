@@ -1,14 +1,18 @@
 terraform {
   required_providers {
     proxmox = {
-      source  = "telmate/proxmox"
-      version = "3.0.1-rc6"
+      source  = "bpg/proxmox"
+      version = "0.66.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
     }
   }
 }
 
 provider "proxmox" {
-  pm_api_url          = var.pve_endpoint
-  pm_api_token_secret = var.pve_api_token
-  pm_tls_insecure     = true
+  endpoint  = var.pve_endpoint
+  api_token = var.pve_api_token
+  insecure  = true
 }
