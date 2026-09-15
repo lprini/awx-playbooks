@@ -1,5 +1,5 @@
 ---
-- name: Provision Ubuntu VM via Terraform
+- name: Deploy Ubuntu 24.04 VM via Terraform
   hosts: localhost
   connection: local
   gather_facts: false
@@ -8,40 +8,22 @@
     tf_dir: "{{ playbook_dir }}/terraform/ubuntu-deploy"
 
   tasks:
-    - name: Execute Terraform Apply
+    - name: Run Terraform Apply
       community.general.terraform:
         project_path: "{{ tf_dir }}"
         state: present
         force_apply: true
         variables:
-          proxmox_api_url: "{{ proxmox_api_url }}"
-          proxmox_api_token_id: "{{ proxmox_api_token_id }}"
-          proxmox_api_token_secret: "{{ proxmox_api_token_secret }}"
-          vm_name: "{{ vm_name }}"
-          vm_id: "{{ vm_id }}"
+          pve_endpoint: "{{ pve_endpoint }}"
+          pve_api_token: "{{ pve_api_token }}"
+          vm_hostname: "{{ vm_hostname }}"
+          cpu_cores: "{{ cpu_cores | default(2) }}"
+          memory_mb: "{{ memory_mb | default(2048) }}"
+          disk_size_gb: "{{ disk_size_gb | default(20) }}"
+          node_name: "{{ node_name | default('host-pve-nagixdtc02') }}"
+          storage_id: "{{ storage_id | default('local-lvm') }}"
       register: tf_result
 
-    - name: Register VM in Dynamic Inventory
-      ansible.builtin.add_host:
-        name: "{{ vm_name }}"
-        ansible_host: "{{ vm_ip }}"
-        ansible_user: "ubuntu"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
-        groups:
-          - new_vms
-      when: vm_ip is defined and vm_ip | length > 0
-
-- name: Simple Post-Configuration
-  hosts: new_vms
-  gather_facts: true
-  become: true
-
-  tasks:
-    - name: Wait for SSH Connection
-      ansible.builtin.wait_for_connection:
-        delay: 5
-        timeout: 180
-
-    - name: Set Hostname
-      ansible.builtin.hostname:
-        name: "{{ vm_name }}"
+    - name: Display Terraform Output
+      ansible.builtin.debug:
+        var: tf_result

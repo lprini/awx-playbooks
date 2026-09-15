@@ -1,45 +1,69 @@
-variable "proxmox_api_url" {
+variable "pve_endpoint" {
   type = string
 }
 
-variable "proxmox_api_token_id" {
-  type = string
-}
-
-variable "proxmox_api_token_secret" {
+variable "pve_api_token" {
   type      = string
   sensitive = true
 }
 
-variable "target_node" {
+variable "vm_hostname" {
+  type        = string
+  description = "Hostname segment for the new VM"
+}
+
+variable "ip_mode" {
+  type        = string
+  description = "dhcp or static"
+  default     = "dhcp"
+}
+
+variable "vm_ip" {
+  type        = string
+  description = "Static IP in CIDR format, e.g. 10.21.40.60/24 (ignored if ip_mode = dhcp)"
+  default     = ""
+}
+
+variable "vm_gateway" {
   type    = string
-  default = "host-pve-nagixdtc02"
+  default = ""
 }
 
-variable "template_name" {
-  type    = string
-  default = "ubuntu-template-build"
+variable "template_vm_id" {
+  type    = number
+  default = 126
 }
 
-variable "vm_name" {
-  type = string
+variable "node_name" {
+  type        = string
+  description = "Target Proxmox node where the VM will be created"
+  default     = "host-pve-nagixdtc02"
 }
 
-variable "vm_id" {
-  type = number
+variable "ssh_public_key" {
+  type        = string
+  description = "SSH public key to inject into the new VM"
+  default     = ""
 }
 
-variable "cores" {
+variable "cpu_cores" {
   type    = number
   default = 2
 }
 
-variable "memory" {
+variable "memory_mb" {
   type    = number
   default = 2048
 }
 
-variable "storage" {
-  type    = string
-  default = "local-lvm"
+variable "disk_size_gb" {
+  type        = number
+  default     = 20
+  description = "Main disk size in GB."
+}
+
+variable "storage_id" {
+  type        = string
+  description = "Target storage pool for VM disks and cloud-init"
+  default     = "local-lvm"
 }

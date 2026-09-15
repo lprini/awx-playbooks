@@ -1,0 +1,453 @@
+---
+- name: Deploy Rocky Linux VM via Terraform
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tf_dir: "{{ playbook_dir }}/terraform/rocky-deploy"
+    ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
+    target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
+    target_storage: "{{ storage_id | default('local-lvm') }}"
+    
+    node_ip_map:
+      host-pve-nagixdtc02: "10.10.10.239"
+      pve-nagixdtc: "10.10.10.240"
+
+    smtp_host: "smtp.skymail.net.br"
+    smtp_port: 587
+    smtp_from: "lucasprini@nagix.com.br"
+    notify_to: "suporte@nagix.com.br"
+
+  tasks:
+    - name: Query Proxmox cluster to locate template 127
+      ansible.builtin.uri:
+        url: "https://10.10.10.239:8006/api2/json/cluster/resources?type=vm"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+      register: cluster_vms
+
+    - name: Store current node of template 127
+      ansible.builtin.set_fact:
+        current_template_node: "{{ (cluster_vms.json.data | selectattr('vmid', 'equalto', 127) | first).node }}"
+
+    - name: Migrate template config to target node
+      ansible.builtin.uri:
+        url: "https://10.10.10.239:8006/api2/json/nodes/{{ current_template_node }}/qemu/127/migrate"
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        body_format: json
+        body:
+          target: "{{ target_node }}"
+        validate_certs: false
+        status_code: [200]
+      when: current_template_node != target_node
+
+    - name: Wait 3 seconds for template config registration
+      ansible.builtin.pause:
+        seconds: 3
+      when: current_template_node != target_node
+
+    - name: Terraform init
+      ansible.builtin.command: terraform init -input=false
+      args:
+        chdir: "{{ tf_dir }}"
+      changed_when: false
+
+    - name: Terraform apply directly to target node
+      ansible.builtin.command: >
+        terraform apply -auto-approve -input=false
+        -var="pve_endpoint=https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006/api2/json"
+        -var="pve_api_token=terraform@pve!provider={{ pve_token_secret }}"
+        -var="node_name={{ target_node }}"
+        -var="storage_id={{ target_storage }}"
+        -var="vm_hostname={{ vm_hostname }}"
+        -var="ip_mode={{ ip_mode }}"
+        -var="vm_ip={{ vm_ip | default('') }}"
+        -var="vm_gateway={{ vm_gateway | default('') }}"
+        -var="ssh_public_key={{ ssh_public_key }}"
+        -var="cpu_cores={{ cpu_cores | default(2) }}"
+        -var="memory_mb={{ memory_mb | default(2048) }}"
+        -var="disk_size_gb={{ disk_size_gb | default(40) }}"
+        -var="add_extra_disk={{ add_extra_disk | default('no') }}"
+        -var="extra_disk_size_gb={{ extra_disk_size_gb | default(20) }}"
+        -var="admin_password={{ admin_password | default('') }}"
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_apply
+
+    - name: Get Terraform outputs
+      ansible.builtin.command: terraform output -json
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_output
+      changed_when: false
+
+    - name: Parse VM ID from Terraform output
+      ansible.builtin.set_fact:
+        new_vm_id: "{{ (tf_output.stdout | from_json).vm_id.value }}"
+
+    - name: Poll Proxmox API for agent-reported IP
+      ansible.builtin.uri:
+        url: "https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+        status_code: [200, 500]
+      register: agent_net
+      until: >
+        agent_net.status == 200 and
+        (agent_net.json.data.result
+          | rejectattr('name', 'equalto', 'lo')
+          | map(attribute='ip-addresses')
+          | flatten
+          | selectattr('ip-address-type', 'equalto', 'ipv4')
+          | list
+          | length) > 0
+      retries: 18
+      delay: 10
+
+    - name: Extract real IPv4 address from agent response
+      ansible.builtin.set_fact:
+        vm_real_ip: >-
+          {{
+            agent_net.json.data.result
+              | rejectattr('name', 'equalto', 'lo')
+              | map(attribute='ip-addresses')
+              | flatten
+              | selectattr('ip-address-type', 'equalto', 'ipv4')
+              | map(attribute='ip-address')
+              | first
+          }}
+
+    - name: Wait for SSH to be available on new VM
+      ansible.builtin.wait_for:
+        host: "{{ vm_real_ip }}"
+        port: 22
+        delay: 5
+        timeout: 120
+
+    - name: Add new VM to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ vm_real_ip }}"
+        groups: new_vms
+        ansible_user: "{{ vm_user | default('nagix') }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+        deployed_hostname_segment: "{{ vm_hostname }}"
+        deployed_ip: "{{ vm_real_ip }}"
+        deployed_ip_mode: "{{ ip_mode }}"
+        deployed_ssh_pubkey: "{{ ssh_public_key }}"
+        do_install_tools: "{{ install_tools | default('yes') }}"
+        do_install_acronis: "{{ install_acronis | default('no') }}"
+        acronis_token_var: "{{ acronis_token | default('DB31-0CB8-4537') }}"
+        do_install_zabbix: "{{ install_zabbix | default('no') }}"
+        zabbix_proxy_ip_var: "{{ zabbix_proxy_ip | default('') }}"
+        do_create_user: "{{ create_user | default('no') }}"
+        new_username_var: "{{ new_username | default('') }}"
+        new_user_password_var: "{{ new_user_password | default('') }}"
+        admin_password_set: "{{ (admin_password | default('')) != '' }}"
+        admin_password_value: "{{ admin_password | default('') }}"
+        deployed_cpu: "{{ cpu_cores | default(2) }}"
+        deployed_memory: "{{ memory_mb | default(2048) }}"
+        deployed_disk: "{{ disk_size_gb | default(40) }}"
+        deployed_extra_disk: "{{ add_extra_disk | default('no') }}"
+        deployed_extra_disk_size: "{{ extra_disk_size_gb | default(20) }}"
+        deployed_vm_id: "{{ new_vm_id }}"
+        deployed_storage: "{{ target_storage }}"
+        deployed_node: "{{ target_node }}"
+
+- name: Configure new VM
+  hosts: new_vms
+  gather_facts: true
+  become: true
+  vars:
+    smtp_host: "smtp.skymail.net.br"
+    smtp_port: 587
+    smtp_from: "lucasprini@nagix.com.br"
+    notify_to: "suporte@nagix.com.br"
+  tasks:
+    - name: Set OS hostname on new VM
+      ansible.builtin.hostname:
+        name: "{{ deployed_hostname_segment }}"
+
+    - name: Install EPEL repository
+      ansible.builtin.dnf:
+        name: epel-release
+        state: present
+      when: do_install_tools == 'yes'
+
+    - name: Install troubleshooting tools
+      ansible.builtin.dnf:
+        name:
+          - vim
+          - htop
+          - tcpdump
+          - bind-utils
+          - net-tools
+          - nmap-ncat
+          - mtr
+          - wget
+          - curl
+          - tar
+          - unzip
+          - lsof
+          - traceroute
+          - bash-completion
+        state: present
+      when: do_install_tools == 'yes'
+
+    # --- ACRONIS INSTALLATION ---
+    - name: Enable CRB repository for Acronis build tools
+      ansible.builtin.command: dnf config-manager --set-enabled crb
+      changed_when: false
+      failed_when: false
+      when: do_install_acronis == 'yes'
+
+    - name: Install required dependencies and build tools for Acronis
+      ansible.builtin.dnf:
+        name:
+          - "kernel-devel-{{ ansible_kernel }}"
+          - "kernel-headers-{{ ansible_kernel }}"
+          - gcc
+          - make
+          - perl
+          - elfutils-libelf-devel
+          - dkms
+          - libnsl
+          - libxcrypt-compat
+          - iptables
+          - kmod
+          - policycoreutils
+        state: present
+      when: do_install_acronis == 'yes'
+
+    - name: Download Acronis Cyber Protect Agent installer from BR02
+      ansible.builtin.get_url:
+        url: "https://br02-cloud.acronis.com/bc/api/ams/links/agents/redirect?language=multi&channel=CURRENT&system=linux&architecture=64&productType=enterprise&login=beebe6bb-903f-4d78-95b8-ede3f8f35e4c&white_labeled=0"
+        dest: /tmp/CyberProtectAgentLinux64.bin
+        mode: '0755'
+        timeout: 300
+      when: do_install_acronis == 'yes'
+
+    - name: Run Acronis unattended installation
+      ansible.builtin.command: >
+        /tmp/CyberProtectAgentLinux64.bin -a --skip-registration
+      register: acronis_install_out
+      when: do_install_acronis == 'yes'
+      changed_when: true
+
+    - name: Reload systemd daemon to discover new services
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: do_install_acronis == 'yes'
+
+    - name: Ensure acronis_mms service is started and enabled
+      ansible.builtin.systemd:
+        name: acronis_mms
+        state: started
+        enabled: true
+      when: do_install_acronis == 'yes'
+
+    - name: Register Acronis Agent to Nagix_Tecnologia via Token
+      ansible.builtin.command: >
+        /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -o register -t cloud -a https://br02-cloud.acronis.com --token {{ acronis_token_var }}
+      register: acronis_reg_output
+      when: do_install_acronis == 'yes'
+      changed_when: true
+
+    - name: Clean up Acronis installer binary
+      ansible.builtin.file:
+        path: /tmp/CyberProtectAgentLinux64.bin
+        state: absent
+      when: do_install_acronis == 'yes'
+
+    # --- ZABBIX AGENT 2 INSTALLATION ---
+    - name: Add Zabbix 7.0 official repository RPM
+      ansible.builtin.dnf:
+        name: "https://repo.zabbix.com/zabbix/7.0/rhel/9/x86_64/zabbix-release-7.0-2.el9.noarch.rpm"
+        state: present
+        disable_gpg_check: true
+      when: do_install_zabbix == 'yes'
+
+    - name: Clean DNF cache post repository addition
+      ansible.builtin.command: dnf clean all
+      changed_when: false
+      when: do_install_zabbix == 'yes'
+
+    - name: Install Zabbix Agent 2
+      ansible.builtin.dnf:
+        name: zabbix-agent2
+        state: present
+      when: do_install_zabbix == 'yes'
+
+    - name: Configure Zabbix Agent 2 Server IP
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^Server='
+        line: "Server={{ zabbix_proxy_ip_var }}"
+      when: do_install_zabbix == 'yes'
+      notify: restart zabbix-agent2
+
+    - name: Configure Zabbix Agent 2 ServerActive IP
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^ServerActive='
+        line: "ServerActive={{ zabbix_proxy_ip_var }}"
+      when: do_install_zabbix == 'yes'
+      notify: restart zabbix-agent2
+
+    - name: Configure Zabbix Agent 2 Hostname
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^Hostname='
+        line: "Hostname={{ deployed_hostname_segment }}"
+      when: do_install_zabbix == 'yes'
+      notify: restart zabbix-agent2
+
+    - name: Check if firewalld is active
+      ansible.builtin.command: firewall-cmd --state
+      register: firewalld_check
+      changed_when: false
+      failed_when: false
+      when: do_install_zabbix == 'yes'
+
+    - name: Open port 10050/tcp in firewalld for Zabbix Proxy queries
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - firewall-cmd --permanent --add-port=10050/tcp
+        - firewall-cmd --reload
+      when: do_install_zabbix == 'yes' and firewalld_check.rc == 0
+
+    - name: Ensure Zabbix Agent 2 service is started and enabled
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: started
+        enabled: true
+      when: do_install_zabbix == 'yes'
+
+    # --- USER & SECURITY HARDENING ---
+    - name: Create additional user
+      ansible.builtin.user:
+        name: "{{ new_username_var }}"
+        password: "{{ new_user_password_var | password_hash('sha512') }}"
+        shell: /bin/bash
+        create_home: true
+      when: do_create_user == 'yes' and new_username_var != ''
+      no_log: true
+
+    - name: Ensure nagix user password is explicitly set and unlocked
+      ansible.builtin.user:
+        name: nagix
+        password: "{{ (admin_password_value if admin_password_set else 'N@gix!#1') | password_hash('sha512') }}"
+        update_password: always
+      no_log: true
+
+    - name: Remove Cloud-Init SSH configuration drop-in file
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        state: absent
+      notify: restart sshd
+
+    - name: Enforce SSH policies via priority drop-in (00-security.conf)
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-security.conf
+        content: |
+          PasswordAuthentication yes
+          PermitRootLogin no
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart sshd
+
+    - name: Apply sshd changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Disable Cloud-Init from re-running on subsequent reboots
+      ansible.builtin.file:
+        path: /etc/cloud/cloud-init.disabled
+        state: touch
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Remove Terraform bootstrap SSH key from guest OS nagix user
+      ansible.posix.authorized_key:
+        user: nagix
+        key: "{{ deployed_ssh_pubkey }}"
+        state: absent
+
+    - name: Clear Cloud-Init SSH key from Proxmox VM config (UI Cleanup)
+      ansible.builtin.uri:
+        url: "https://{{ node_ip_map[deployed_node] | default('10.10.10.239') }}:8006/api2/json/nodes/{{ deployed_node }}/qemu/{{ deployed_vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          sshkeys: ""
+        validate_certs: false
+        status_code: [200]
+      delegate_to: localhost
+      become: false
+
+    # --- EMAIL NOTIFICATION ---
+    - name: Build email body
+      ansible.builtin.set_fact:
+        email_body: |
+          VM Provisioned
+          ========================================
+          Proxmox VM Name:  pve-{{ deployed_hostname_segment }}
+          Hostname (OS):    {{ deployed_hostname_segment }}
+          Proxmox Node:     {{ deployed_node }}
+          Storage:          {{ deployed_storage }}
+          VM ID:            {{ deployed_vm_id }}
+          IP Address:       {{ deployed_ip }} ({{ deployed_ip_mode }})
+
+          Resources:
+            CPU Cores:      {{ deployed_cpu }}
+            Memory (MB):    {{ deployed_memory }}
+            Disk:           {{ deployed_disk }} GB
+            Extra Disk:     {{ deployed_extra_disk }}{{ ' - ' + deployed_extra_disk_size + ' GB' if deployed_extra_disk == 'yes' else '' }}
+
+          Backup & Monitoring:
+            Acronis Agent:     {{ 'Installed & Registered to Nagix_Tecnologia via Token' if do_install_acronis == 'yes' else 'Not Installed' }}
+            Zabbix Agent 2:    {{ do_install_zabbix }}{{ ' (Proxy: ' + zabbix_proxy_ip_var + ')' if do_install_zabbix == 'yes' else '' }}
+
+          Access:
+            Admin user:     nagix
+              Password:     {{ admin_password_value if admin_password_set else 'N@gix!#1' }}
+              SSH Access:   Password login enabled (bootstrap key revoked)
+            Root SSH:       Disabled
+
+            Additional user: {{ new_username_var if (do_create_user == 'yes' and new_username_var != '') else 'none created' }}
+              Password:     {{ new_user_password_var if (do_create_user == 'yes' and new_username_var != '') else 'n/a' }}
+          ========================================
+      no_log: true
+
+    - name: Send provisioning email
+      community.general.mail:
+        host: "{{ smtp_host }}"
+        port: "{{ smtp_port }}"
+        username: "{{ smtp_from }}"
+        password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
+        to: "{{ notify_to }}"
+        from: "{{ smtp_from }}"
+        subject: "VM Provisioned: pve-{{ deployed_hostname_segment }}"
+        body: "{{ email_body }}"
+        secure: starttls
+      no_log: true
+      become: false
+      delegate_to: localhost
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+
+    - name: restart zabbix-agent2
+      ansible.builtin.service:
+        name: zabbix-agent2
+        state: restarted
