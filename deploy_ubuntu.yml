@@ -318,13 +318,16 @@
       failed_when: false
       when: do_install_zabbix == 'yes'
 
-    - name: Open port 10050/tcp in ufw for Zabbix Proxy queries
-      community.general.ufw:
-        rule: allow
-        port: '10050'
-        proto: tcp
-      when: do_install_zabbix == 'yes' and ufw_check.rc == 0 and 'Status: active' in ufw_check.stdout
-
+   - name: Open port 10050/tcp in ufw for Zabbix Proxy queries
+     community.general.ufw:
+      rule: allow
+      port: '10050'
+      proto: tcp
+     when:
+      - do_install_zabbix == 'yes'
+      - ufw_check.rc == 0
+      - "'Status: active' in ufw_check.stdout"
+  
     - name: Clean up Zabbix release DEB file
       ansible.builtin.file:
         path: /tmp/zabbix-release.deb
