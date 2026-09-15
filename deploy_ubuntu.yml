@@ -222,12 +222,13 @@
           - perl
           - dkms
           - libnsl2
-          - libxcrypt-dev
+          - libcrypt-dev   # <--- Updated from libxcrypt-dev to libcrypt-dev
           - iptables
           - kmod
           - policycoreutils
         state: present
       when: do_install_acronis == 'yes'
+
 
     - name: Download Acronis Cyber Protect Agent installer
       ansible.builtin.get_url:
