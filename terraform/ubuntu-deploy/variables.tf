@@ -1,5 +1,6 @@
 variable "pve_endpoint" {
-  type = string
+  type    = string
+  default = "https://host-pve-nagixdtc02:8006/api2/json"
 }
 
 variable "pve_api_token" {
