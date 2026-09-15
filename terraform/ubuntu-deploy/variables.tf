@@ -81,5 +81,4 @@ variable "storage_id" {
   type        = string
   description = "Target storage pool for VM disks and cloud-init"
   default     = "local-lvm"
-
-
+}
