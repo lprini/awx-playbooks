@@ -10,9 +10,13 @@
     target_storage: "{{ storage_id | default('local-lvm') }}"
     template_vm_id: "{{ template_id | default(129) }}"
 
-    # Survey Default Variables for Monitoring / Security Agents
-    install_wazuh: "yes"
-    wazuh_manager_ip: "172.24.0.12"
+    # Monitoring / Security Agent Defaults
+    install_wazuh: "{{ do_install_wazuh | default('yes') }}"
+    wazuh_manager_ip: "{{ wazuh_manager_ip_var | default('172.24.0.12') }}"
+    install_zabbix: "{{ do_install_zabbix | default('no') }}"
+    zabbix_proxy_ip: "{{ zabbix_proxy_ip_var | default('') }}"
+    install_acronis: "{{ do_install_acronis | default('no') }}"
+    acronis_token: "{{ acronis_token_var | default('') }}"
 
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
@@ -148,11 +152,11 @@
         deployed_ssh_pubkey: "{{ ssh_public_key }}"
         do_install_tools: "{{ install_tools | default('yes') }}"
         do_install_acronis: "{{ install_acronis | default('no') }}"
-        acronis_token_var: "{{ acronis_token | default('DB31-0CB8-4537') }}"
+        acronis_token_var: "{{ acronis_token }}"
         do_install_zabbix: "{{ install_zabbix | default('no') }}"
-        zabbix_proxy_ip_var: "{{ zabbix_proxy_ip | default('') }}"
+        zabbix_proxy_ip_var: "{{ zabbix_proxy_ip }}"
         do_install_wazuh: "{{ install_wazuh | default('yes') }}"
-        wazuh_manager_ip_var: "{{ wazuh_manager_ip | default('172.24.0.12') }}"
+        wazuh_manager_ip_var: "{{ wazuh_manager_ip }}"
         do_create_user: "{{ create_user | default('no') }}"
         new_username_var: "{{ new_username | default('') }}"
         new_user_password_var: "{{ new_user_password | default('') }}"
@@ -209,7 +213,7 @@
       when: do_install_tools == 'yes'
 
     # --- ACRONIS INSTALLATION ---
-    - name: Install required dependencies and build tools for Acronis
+    - name: Install required dependencies for Acronis
       ansible.builtin.apt:
         name:
           - "linux-headers-{{ ansible_kernel }}"
@@ -225,7 +229,7 @@
         state: present
       when: do_install_acronis == 'yes'
 
-    - name: Download Acronis Cyber Protect Agent installer from BR02
+    - name: Download Acronis Cyber Protect Agent installer
       ansible.builtin.get_url:
         url: "https://br02-cloud.acronis.com/bc/api/ams/links/agents/redirect?language=multi&channel=CURRENT&system=linux&architecture=64&productType=enterprise&login=beebe6bb-903f-4d78-95b8-ede3f8f35e4c&white_labeled=0"
         dest: /tmp/CyberProtectAgentLinux64.bin
@@ -240,7 +244,7 @@
       when: do_install_acronis == 'yes'
       changed_when: true
 
-    - name: Reload systemd daemon to discover new services
+    - name: Reload systemd daemon for Acronis
       ansible.builtin.systemd:
         daemon_reload: true
       when: do_install_acronis == 'yes'
@@ -252,11 +256,11 @@
         enabled: true
       when: do_install_acronis == 'yes'
 
-    - name: Register Acronis Agent to Nagix_Tecnologia via Token
+    - name: Register Acronis Agent via Token
       ansible.builtin.command: >
         /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -o register -t cloud -a https://br02-cloud.acronis.com --token {{ acronis_token_var }}
       register: acronis_reg_output
-      when: do_install_acronis == 'yes'
+      when: do_install_acronis == 'yes' and acronis_token_var != ''
       changed_when: true
 
     - name: Clean up Acronis installer binary
@@ -343,7 +347,7 @@
         enabled: true
       when: do_install_zabbix == 'yes'
 
-    # --- WAZUH AGENT INSTALLATION ---
+    # --- WAZUH AGENT INSTALLATION (DEB) ---
     - name: Download Wazuh Agent DEB package
       ansible.builtin.get_url:
         url: "https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.14.2-1_amd64.deb"
@@ -351,20 +355,12 @@
         mode: '0644'
       when: do_install_wazuh == 'yes'
 
-    - name: Install Wazuh Agent DEB with Manager IP
+    - name: Install Wazuh Agent DEB with Manager Environment Variable
       ansible.builtin.apt:
         deb: /tmp/wazuh-agent_4.14.2-1_amd64.deb
       environment:
         WAZUH_MANAGER: "{{ wazuh_manager_ip_var }}"
       when: do_install_wazuh == 'yes'
-
-    - name: Ensure Wazuh Manager address is set in ossec.conf
-      ansible.builtin.replace:
-        path: /var/ossec/etc/ossec.conf
-        regexp: '<address>.*?</address>'
-        replace: '<address>{{ wazuh_manager_ip_var }}</address>'
-      when: do_install_wazuh == 'yes'
-      notify: restart wazuh-agent
 
     - name: Clean up Wazuh DEB installer file
       ansible.builtin.file:
@@ -405,7 +401,7 @@
       ansible.builtin.file:
         path: /etc/ssh/sshd_config.d/50-cloud-init.conf
         state: absent
-      notify: restart sshd
+      notify: restart ssh
 
     - name: Enforce SSH policies via priority drop-in (00-security.conf)
       ansible.builtin.copy:
@@ -416,7 +412,7 @@
         owner: root
         group: root
         mode: '0644'
-      notify: restart sshd
+      notify: restart ssh
 
     - name: Apply sshd changes now
       ansible.builtin.meta: flush_handlers
@@ -469,7 +465,7 @@
             Extra Disk:     {{ deployed_extra_disk }}{{ ' - ' + deployed_extra_disk_size + ' GB' if deployed_extra_disk == 'yes' else '' }}
 
           Backup & Monitoring:
-            Acronis Agent:     {{ 'Installed & Registered to Nagix_Tecnologia via Token' if do_install_acronis == 'yes' else 'Not Installed' }}
+            Acronis Agent:     {{ 'Installed & Registered via Token' if do_install_acronis == 'yes' else 'Not Installed' }}
             Zabbix Agent 2:    {{ do_install_zabbix }}{{ ' (Proxy: ' + zabbix_proxy_ip_var + ')' if do_install_zabbix == 'yes' else '' }}
             Wazuh Agent:       {{ 'Installed & Pointed to ' + wazuh_manager_ip_var if do_install_wazuh == 'yes' else 'Not Installed' }}
 
@@ -500,7 +496,7 @@
       delegate_to: localhost
 
   handlers:
-    - name: restart sshd
+    - name: restart ssh
       ansible.builtin.service:
         name: ssh
         state: restarted
