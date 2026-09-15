@@ -31,7 +31,7 @@ variable "vm_gateway" {
 
 variable "template_vm_id" {
   type    = number
-  default = 128
+  default = 129
 }
 
 variable "node_name" {
@@ -81,4 +81,5 @@ variable "storage_id" {
   type        = string
   description = "Target storage pool for VM disks and cloud-init"
   default     = "local-lvm"
-}
+
+
