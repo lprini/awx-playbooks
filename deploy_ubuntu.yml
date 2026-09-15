@@ -2,15 +2,17 @@
 - name: Deploy Ubuntu 24.04 VM via Terraform
   hosts: localhost
   gather_facts: false
+  become: false
   vars:
-      tf_dir: "{{ playbook_dir }}/terraform/ubuntu-deploy"
-      ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
-      target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
-      target_storage: "{{ storage_id | default('local-lvm') }}"
-      template_vm_id: "{{ template_id | default(126) }}"
-      # Survey Default Variables for Monitoring / Security Agents
-      install_wazuh: "yes"
-      wazuh_manager_ip: "172.24.0.12"
+    tf_dir: "{{ playbook_dir }}/terraform/ubuntu-deploy"
+    ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
+    target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
+    target_storage: "{{ storage_id | default('local-lvm') }}"
+    template_vm_id: "{{ template_id | default(126) }}"
+
+    # Survey Default Variables for Monitoring / Security Agents
+    install_wazuh: "yes"
+    wazuh_manager_ip: "172.24.0.12"
 
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
