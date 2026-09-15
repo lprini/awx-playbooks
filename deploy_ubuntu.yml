@@ -8,7 +8,7 @@
     ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBNFA5Rsd7PHUa5k/C/cpqnUEQCO3IlnE8pyCJIRRHl1 terraform@pve-terraform"
     target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
     target_storage: "{{ storage_id | default('local-lvm') }}"
-    template_vm_id: "{{ template_id | default(126) }}"
+    template_vm_id: "{{ template_id | default(129) }}"
 
     # Survey Default Variables for Monitoring / Security Agents
     install_wazuh: "yes"
