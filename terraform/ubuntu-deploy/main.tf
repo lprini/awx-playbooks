@@ -48,13 +48,10 @@ resource "proxmox_virtual_environment_vm" "deploy" {
     datastore_id = var.storage_id
     interface    = "scsi1"
 
-    dynamic "ip_config" {
-      for_each = [1]
-      content {
-        ipv4 {
-          address = var.ip_mode == "static" ? var.vm_ip : "dhcp"
-          gateway = var.ip_mode == "static" ? var.vm_gateway : null
-        }
+    ip_config {
+      ipv4 {
+	address = var.ip_mode == "static" ? var.vm_ip : "dhcp"
+	gateway = var.ip_mode == "static" ? var.vm_gateway : null
       }
     }
 
