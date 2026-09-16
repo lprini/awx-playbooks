@@ -16,7 +16,7 @@
     install_zabbix: "{{ do_install_zabbix | default('no') }}"
     zabbix_proxy_ip: "{{ zabbix_proxy_ip_var | default('') }}"
     install_acronis: "{{ do_install_acronis | default('no') }}"
-    acronis_token: "YOUR_HARDCODED_ACRONIS_TOKEN_HERE" # Hardcoded globally just like Rocky configuration
+    acronis_token: "DB31-0CB8-4537" # Hardcoded globally just like Rocky configuration
 
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
