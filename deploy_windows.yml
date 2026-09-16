@@ -1,0 +1,160 @@
+---
+- name: Deploy Windows Server 2022 VM via Terraform
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    tf_dir: "{{ playbook_dir }}/terraform/windows-deploy"
+    target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
+    target_storage: "{{ storage_id | default('local-lvm') }}"
+    template_vm_id: "{{ template_id | default(128) }}"
+
+    node_ip_map:
+      host-pve-nagixdtc02: "10.10.10.239"
+      pve-nagixdtc: "10.10.10.240"
+
+    smtp_host: "smtp.skymail.net.br"
+    smtp_port: 587
+    smtp_from: "lucasprini@nagix.com.br"
+    notify_to: "suporte@nagix.com.br"
+
+  tasks:
+    - name: Query Proxmox cluster to locate template {{ template_vm_id }}
+      ansible.builtin.uri:
+        url: "https://10.10.10.239:8006/api2/json/cluster/resources?type=vm"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+      register: cluster_vms
+
+    - name: Store current node of template {{ template_vm_id }}
+      ansible.builtin.set_fact:
+        current_template_node: "{{ (cluster_vms.json.data | selectattr('vmid', 'equalto', template_vm_id | int) | first).node }}"
+
+    - name: Migrate template config to target node
+      ansible.builtin.uri:
+        url: "https://10.10.10.239:8006/api2/json/nodes/{{ current_template_node }}/qemu/{{ template_vm_id }}/migrate"
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        body_format: json
+        body:
+          target: "{{ target_node }}"
+        validate_certs: false
+        status_code: [200]
+      when: current_template_node != target_node
+
+    - name: Wait 3 seconds for template config registration
+      ansible.builtin.pause:
+        seconds: 3
+      when: current_template_node != target_node
+
+    - name: Terraform init
+      ansible.builtin.command: terraform init -input=false
+      args:
+        chdir: "{{ tf_dir }}"
+      changed_when: false
+
+    - name: Terraform apply directly to target node
+      ansible.builtin.command: >
+        terraform apply -auto-approve -input=false
+        -var="pve_endpoint=https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006/api2/json"
+        -var="pve_api_token=terraform@pve!provider={{ pve_token_secret }}"
+        -var="node_name={{ target_node }}"
+        -var="storage_id={{ target_storage }}"
+        -var="template_vm_id={{ template_vm_id }}"
+        -var="vm_hostname={{ vm_hostname }}"
+        -var="ip_mode={{ ip_mode }}"
+        -var="vm_ip={{ vm_ip | default('') }}"
+        -var="vm_gateway={{ vm_gateway | default('') }}"
+        -var="cpu_cores={{ cpu_cores | default(4) }}"
+        -var="memory_mb={{ memory_mb | default(4096) }}"
+        -var="disk_size_gb={{ disk_size_gb | default(60) }}"
+        -var="admin_password={{ admin_password | default('N@gix!#1') }}"
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_apply
+
+    - name: Get Terraform outputs
+      ansible.builtin.command: terraform output -json
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_output
+      changed_when: false
+
+    - name: Parse VM ID from Terraform output
+      ansible.builtin.set_fact:
+        new_vm_id: "{{ (tf_output.stdout | from_json).vm_id.value }}"
+
+    - name: Poll Proxmox API for agent-reported IP
+      ansible.builtin.uri:
+        url: "https://{{ node_ip_map[target_node] | default('10.10.10.239') }}:8006/api2/json/nodes/{{ target_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken=terraform@pve!provider={{ pve_token_secret }}"
+        validate_certs: false
+        status_code: [200, 500]
+      register: agent_net
+      until: >
+        agent_net.status == 200 and
+        (agent_net.json.data.result
+          | rejectattr('name', 'equalto', 'lo')
+          | map(attribute='ip-addresses')
+          | flatten
+          | selectattr('ip-address-type', 'equalto', 'ipv4')
+          | list
+          | length) > 0
+      retries: 24
+      delay: 10
+
+    - name: Extract real IPv4 address from agent response
+      ansible.builtin.set_fact:
+        vm_real_ip: >-
+          {{
+            agent_net.json.data.result
+              | rejectattr('name', 'equalto', 'lo')
+              | map(attribute='ip-addresses')
+              | flatten
+              | selectattr('ip-address-type', 'equalto', 'ipv4')
+              | map(attribute='ip-address')
+              | first
+          }}
+
+    - name: Build email body
+      ansible.builtin.set_fact:
+        email_body: |
+          Windows Server 2022 Provisioned
+          ========================================
+          Proxmox VM Name:  pve-{{ vm_hostname }}
+          Hostname (OS):    {{ vm_hostname }}
+          Proxmox Node:     {{ target_node }}
+          Storage:          {{ target_storage }}
+          VM ID:            {{ new_vm_id }}
+          IP Address:       {{ vm_real_ip }} ({{ ip_mode }})
+
+          Resources:
+            CPU Cores:      {{ cpu_cores | default(4) }}
+            Memory (MB):    {{ memory_mb | default(4096) }}
+            Disk:           {{ disk_size_gb | default(60) }} GB
+
+          Access:
+            Admin user:     Administrator
+            Password:       (As provided in AWX Survey)
+          ========================================
+      no_log: true
+
+    - name: Send provisioning email
+      community.general.mail:
+        host: "{{ smtp_host }}"
+        port: "{{ smtp_port }}"
+        username: "{{ smtp_from }}"
+        password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
+        to: "{{ notify_to }}"
+        from: "{{ smtp_from }}"
+        subject: "Windows VM Provisioned: pve-{{ vm_hostname }}"
+        body: "{{ email_body }}"
+        secure: starttls
+      no_log: true
+      become: false
+      delegate_to: localhost
