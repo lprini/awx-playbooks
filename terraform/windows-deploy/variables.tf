@@ -31,7 +31,7 @@ variable "vm_gateway" {
 
 variable "template_vm_id" {
   type    = number
-  default = 128
+  default = 130
 }
 
 variable "node_name" {
