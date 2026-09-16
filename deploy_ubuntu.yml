@@ -261,7 +261,7 @@
       ansible.builtin.command: >
         /usr/lib/Acronis/RegisterAgentTool/RegisterAgent -o register -t cloud -a https://br02-cloud.acronis.com --token {{ acronis_token_var }}
       register: acronis_reg_output
-      when: do_install_acronis == 'yes' and acronis_token_var != ''
+      when: do_install_acronis == 'yes' and acronis_token_var != 'DB31-0CB8-4537'
       changed_when: true
 
     - name: Clean up Acronis installer binary
