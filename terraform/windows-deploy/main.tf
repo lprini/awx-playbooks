@@ -37,7 +37,6 @@ resource "proxmox_virtual_environment_vm" "deploy" {
   initialization {
     datastore_id = var.storage_id
     interface    = "scsi1"
-    hostname     = var.vm_hostname
 
     ip_config {
       ipv4 {
