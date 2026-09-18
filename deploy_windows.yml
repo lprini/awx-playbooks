@@ -7,7 +7,7 @@
     tf_dir: "{{ playbook_dir }}/terraform/windows-deploy"
     target_node: "{{ node_name | default('host-pve-nagixdtc02') }}"
     target_storage: "{{ storage_id | default('local-lvm') }}"
-    template_vm_id: "{{ template_id | default(126) }}"
+    template_vm_id: "{{ template_id | default(128) }}"
 
     node_ip_map:
       host-pve-nagixdtc02: "10.10.10.239"
