@@ -15,7 +15,7 @@ resource "proxmox_virtual_environment_vm" "deploy" {
 
   agent {
     enabled = true
-    timeout = "5m"
+    timeout = "15m"
   }
 
   cpu {
